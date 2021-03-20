@@ -24,17 +24,36 @@ if not os.path.isfile(DATA_FILE):
     open(DATA_FILE, 'wb').write(
         requests.get('https://raw.githubusercontent.com/open-dict-data/ipa-dict/master/data/' + DATA_FILE).content)
 
-DEVICE = torch.device('cuda:0')
+DEVICE = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 
 OUT_LOOKUP = ['', 'b', 'a', 'ʊ', 't', 'k', 'ə', 'z', 'ɔ', 'ɹ', 's', 'j', 'u', 'm', 'f', 'ɪ', 'o', 'ɡ', 'ɛ', 'n',
               'e', 'd',
               'ɫ', 'w', 'i', 'p', 'ɑ', 'ɝ', 'θ', 'v', 'h', 'æ', 'ŋ', 'ʃ', 'ʒ', 'ð', '^', '$']
 
-OUT_ALPHABET = {letter: idx for idx, letter in enumerate(OUT_LOOKUP)}
-
 IN_LOOKUP = ['', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't',
              'u', 'v', 'w', 'x', 'y', 'z', '$', '^']
+
+
+def extract_alphabet():
+    """
+    This function has been used to extract the alphabet but then it was hard-coded directly into
+    code in order to speed up loading time
+    """
+    with open(DATA_FILE) as f:
+        in_alph = set()
+        out_alph = set()
+        for line in f:
+            text, phonemes = line.strip().split("\t")
+            phonemes = phonemes.split(",")[0]
+            for letter in phonemes:
+                out_alph.add(letter)
+                in_alph.add(letter)
+        return in_alph, out_alph
+
+
 IN_ALPHABET = {letter: idx for idx, letter in enumerate(IN_LOOKUP)}
+
+OUT_ALPHABET = {letter: idx for idx, letter in enumerate(OUT_LOOKUP)}
 
 TOTAL_OUT_LEN = 0
 
