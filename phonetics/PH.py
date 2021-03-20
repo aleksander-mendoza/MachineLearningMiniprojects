@@ -3,61 +3,60 @@ import unicodedata
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.nn.utils.rnn import pad_packed_sequence
 from torch.utils.data import Dataset, DataLoader
 
-from torchtext.legacy.datasets import Multi30k
-from torchtext.legacy.data import Field, BucketIterator
-
-import numpy as np
 import re
 import random
-import math
-import time
+import os
+from tqdm import tqdm
 
-device = torch.device('cpu')
+DATA_FILE = 'en_US.txt'
+EPOCHS = 2
+TEACHER_FORCING_PROBABILITY = 0.4
+LEARNING_RATE = 0.01
+BATCH_SIZE = 32
 
-out_alphabet = {'': 0, 'b': 1, 'a': 2, 'ʊ': 3, 't': 4, 'k': 5, 'ə': 6, 'z': 7, 'ɔ': 8, 'ɹ': 9, 's': 10, 'j': 11,
-                'u': 12,
-                'm': 13, 'f': 14, 'ɪ': 15, 'o': 16, 'ɡ': 17, 'ɛ': 18, 'n': 19, 'e': 20, 'd': 21, 'ɫ': 22, 'w': 23,
-                'i': 24,
-                'p': 25, 'ɑ': 26, 'ɝ': 27, 'θ': 28, 'v': 29, 'h': 30, 'æ': 31, 'ŋ': 32, 'ʃ': 33, 'ʒ': 34, 'ð': 35,
-                '^': 36, '$': 37}
-out_lookup = ['', 'b', 'a', 'ʊ', 't', 'k', 'ə', 'z', 'ɔ', 'ɹ', 's', 'j', 'u', 'm', 'f', 'ɪ', 'o', 'ɡ', 'ɛ', 'n',
+if not os.path.isfile(DATA_FILE):
+    import requests
+
+    open(DATA_FILE, 'wb').write(
+        requests.get('https://raw.githubusercontent.com/open-dict-data/ipa-dict/master/data/' + DATA_FILE).content)
+
+DEVICE = torch.device('cuda:0')
+
+OUT_LOOKUP = ['', 'b', 'a', 'ʊ', 't', 'k', 'ə', 'z', 'ɔ', 'ɹ', 's', 'j', 'u', 'm', 'f', 'ɪ', 'o', 'ɡ', 'ɛ', 'n',
               'e', 'd',
               'ɫ', 'w', 'i', 'p', 'ɑ', 'ɝ', 'θ', 'v', 'h', 'æ', 'ŋ', 'ʃ', 'ʒ', 'ð', '^', '$']
 
-in_alphabet = {'': 0, 'a': 1, 'b': 2, 'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8, 'i': 9, 'j': 10, 'k': 11, 'l': 12,
-               'm': 13, 'n': 14, 'o': 15, 'p': 16, 'q': 17, 'r': 18, 's': 19, 't': 20, 'u': 21, 'v': 22, 'w': 23,
-               'x': 24, 'y': 25, 'z': 26, '$': 27, '^': 28}
-in_lookup = ['', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't',
+OUT_ALPHABET = {letter: idx for idx, letter in enumerate(OUT_LOOKUP)}
+
+IN_LOOKUP = ['', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't',
              'u', 'v', 'w', 'x', 'y', 'z', '$', '^']
+IN_ALPHABET = {letter: idx for idx, letter in enumerate(IN_LOOKUP)}
+
+DATA: [(torch.tensor, torch.tensor)] = []
+
+with open(DATA_FILE) as f:
+    for line in f:
+        text, phonemes = line.strip().split("\t")
+        phonemes = phonemes.split(",")[0]
+        phonemes = '^' + re.sub(r'[/\'ˈˌ]', '', phonemes) + '$'
+        text = '^' + re.sub(r'[^a-z]', '', text) + '$'
+        text = torch.tensor([IN_ALPHABET[letter] for letter in text], dtype=torch.int)
+        phonemes = torch.tensor([OUT_ALPHABET[letter] for letter in phonemes], dtype=torch.int)
+        DATA.append((text, phonemes))
+
+print("Number of samples ", len(DATA))
 
 
-class PhoneticDataset(Dataset):
-    def __init__(self, data_file):
-        self.data = []
-        with open(data_file) as f:
-            for line in f:
-                text, phonemes = line.strip().split("\t")
-                phonemes = phonemes.split(",")[0]
-                phonemes = '^' + re.sub(r'[/\'ˈˌ]', '', phonemes) + '$'
-                text = '^' + re.sub(r'[^a-z]', '', text) + '$'
-                text = torch.tensor([in_alphabet[letter] for letter in text], dtype=torch.int)
-                phonemes = torch.tensor([out_alphabet[letter] for letter in phonemes], dtype=torch.int)
-                self.data.append((text, phonemes))
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        return self.data[idx]
+def shuffle_but_keep_sorted_by_output_lengths(data: [(torch.tensor, torch.tensor)]):
+    random.shuffle(data)
+    data.sort(reverse=True, key=lambda x: len(x[1]))  # sort with respect to output lengths
 
 
 def collate(batch: [(torch.tensor, torch.tensor)]):
-    batch.sort(reverse=True, key=lambda x: len(x[0]))
+    batch.sort(reverse=True, key=lambda x: len(x[0]))  # sort with respect to input lengths
     in_lengths = [len(entry[0]) for entry in batch]
-    print(in_lengths)
     max_in_len = max(in_lengths)
     out_lengths = [len(entry[1]) for entry in batch]
     max_out_len = max(out_lengths)
@@ -73,88 +72,103 @@ class EncoderRNN(nn.Module):
     def __init__(self, hidden_size):
         super(EncoderRNN, self).__init__()
         self.hidden_size = hidden_size
-        self.embedding = nn.Embedding(num_embeddings=len(in_alphabet),
+        self.hidden_layers = 1
+        self.embedding = nn.Embedding(num_embeddings=len(IN_ALPHABET),
                                       embedding_dim=hidden_size,
-                                      padding_idx=in_alphabet[''])
+                                      padding_idx=IN_ALPHABET[''])
         self.gru = nn.GRU(input_size=hidden_size,
                           hidden_size=hidden_size,
-                          num_layers=1,
+                          num_layers=self.hidden_layers,
                           batch_first=True)
 
-    def forward(self, padded_in, in_lengths):
+    def forward(self, padded_in, in_lengths, hidden):
         batch_size = len(in_lengths)
-        hidden = self.init_hidden(batch_size)
-        # print("hidden=", hidden.size())
-        # print("padded_in=", padded_in.shape)
-        # print("in_lengths=", in_lengths)
+        assert hidden.size() == (self.hidden_layers, batch_size, self.hidden_size)
         embedded = self.embedding(padded_in)
-        # print("embedded=", embedded.size())
+        assert embedded.size() == (batch_size, max(in_lengths), self.hidden_size)
         packed = torch.nn.utils.rnn.pack_padded_sequence(embedded, in_lengths, batch_first=True)
-        # print("packed=", packed.data.size())
         gru_out, hidden = self.gru(packed, hidden)
-        # print("gru_out=", gru_out.data.size())
-        # print("hidden=", hidden.size())
         unpacked, _ = torch.nn.utils.rnn.pad_packed_sequence(gru_out, batch_first=True)
-        # print("unpacked=", unpacked.size())
+        assert unpacked.size() == (batch_size, max(in_lengths), self.hidden_size)
+        assert hidden.size() == (self.hidden_layers, batch_size, self.hidden_size)
         return unpacked, hidden
 
-    def init_hidden(self, batch_size):
-        return torch.zeros(1, batch_size, self.hidden_size, device=device)
+    def init_hidden(self, batch_size, device):
+        return torch.zeros(self.hidden_layers, batch_size, self.hidden_size, device=device)
 
 
 class DecoderRNN(nn.Module):
     def __init__(self, hidden_size):
         super(DecoderRNN, self).__init__()
         self.hidden_size = hidden_size
-        self.embedding = nn.Embedding(num_embeddings=len(out_alphabet),
+        self.hidden_layers = 1
+        self.embedding = nn.Embedding(num_embeddings=len(OUT_ALPHABET),
                                       embedding_dim=hidden_size,
-                                      padding_idx=out_alphabet[''])
+                                      padding_idx=OUT_ALPHABET[''])
         self.gru = nn.GRU(input_size=hidden_size,
                           hidden_size=hidden_size,
-                          num_layers=1,
+                          num_layers=self.hidden_layers,
                           batch_first=True)
-        self.out = nn.Linear(hidden_size, len(out_alphabet))
+        self.out = nn.Linear(hidden_size, len(OUT_ALPHABET))
         self.softmax = nn.LogSoftmax(dim=2)
 
     def forward(self, padded_out, hidden):
+        batch_size = len(padded_out)
         padded_out = padded_out.unsqueeze(1)
+        seq_length = 1
+        assert hidden.size() == (self.hidden_layers, batch_size, self.hidden_size)
         embedded = self.embedding(padded_out)
+        assert embedded.size() == (batch_size, self.hidden_layers, self.hidden_size)
         gru_out, hidden = self.gru(embedded, hidden)
+        assert hidden.size() == (self.hidden_layers, batch_size, self.hidden_size)
+        assert gru_out.size() == (batch_size, seq_length, self.hidden_size)
         lin = self.out(gru_out)
+        assert lin.size() == (batch_size, seq_length, len(OUT_ALPHABET))
         probabilities = self.softmax(lin)
+        assert probabilities.size() == (batch_size, seq_length, len(OUT_ALPHABET))
         return probabilities, hidden
 
 
-def train(epochs, teacher_forcing_probability, learning_rate=0.01,batch_size=8):
-    encoder = EncoderRNN(3)
-    decoder = DecoderRNN(3)
-    encoder_optimizer = optim.SGD(filter(lambda x: x.requires_grad, encoder.parameters()),
-                                  lr=learning_rate)
-    decoder_optimizer = optim.SGD(filter(lambda x: x.requires_grad, decoder.parameters()),
-                                  lr=learning_rate)
-    criterion = nn.NLLLoss()
-    # https://raw.githubusercontent.com/open-dict-data/ipa-dict/master/data/en_US.txt
-    dataset = PhoneticDataset('en_US.txt')
-    data_loader = DataLoader(dataset=dataset, batch_size=batch_size, collate_fn=collate)
-    for epoch in range(epochs):
-        for batch_in, i_lengths, batch_out, o_length in data_loader:
-            loss = 0
-            encoder_output, hidden = encoder.forward(batch_in, i_lengths)
-            output = batch_out[:, 0]
-            for i in range(len(batch_out) - 1):
-                if random.random() < teacher_forcing_probability:
-                    out = batch_out[:, i].unsqueeze(1)
-                else:
-                    out = output
-                output, hidden = decoder.forward(out, hidden)
-                loss += criterion(output.squeeze(1), batch_out[:, i + 1])
-                output = torch.argmax(output, 2)
-            loss.backward()
-            encoder_optimizer.step()
-            decoder_optimizer.step()
-            print('epochs: ' + str(epoch))
-            print('total loss: ' + str(loss))
-            print()
+encoder = EncoderRNN(3)
+decoder = DecoderRNN(3)
+encoder.to(DEVICE)
+decoder.to(DEVICE)
+encoder_optimizer = optim.SGD(filter(lambda x: x.requires_grad, encoder.parameters()),
+                              lr=LEARNING_RATE)
+decoder_optimizer = optim.SGD(filter(lambda x: x.requires_grad, decoder.parameters()),
+                              lr=LEARNING_RATE)
+criterion = nn.NLLLoss()
 
+with tqdm(total=EPOCHS, position=0) as outer_bar:
+    outer_bar.set_description("Epochs")
+    for epoch in range(EPOCHS):
+        shuffle_but_keep_sorted_by_output_lengths(DATA)
+        with tqdm(total=len(DATA), position=1) as inner_bar:
+            for batch_in, i_lengths, batch_out, o_lengths in DataLoader(dataset=DATA, drop_last=True,
+                                                                        batch_size=BATCH_SIZE,
+                                                                        collate_fn=collate):
+                batch_in = batch_in.to(DEVICE)
+                batch_out = batch_out.to(DEVICE)
+                out_seq_len = batch_out.size()[1]
+                in_seq_len = batch_in.size()[1]
+                assert batch_in.size() == (BATCH_SIZE, in_seq_len)
+                assert batch_out.size() == (BATCH_SIZE, out_seq_len)
+                loss = 0
+                hidden = encoder.init_hidden(BATCH_SIZE, device=DEVICE)
+                encoder_output, hidden = encoder(batch_in, i_lengths, hidden)
+                output = batch_out[:, 0]
+                for i in range(out_seq_len - 1):
+                    if random.random() < TEACHER_FORCING_PROBABILITY:
+                        out = batch_out[:, i]
+                    else:
+                        out = output
+                    output, hidden = decoder(out, hidden)
+                    loss += criterion(output.squeeze(1), batch_out[:, i + 1])
+                    output = torch.argmax(output, 2).squeeze(1)
+                loss.backward()
+                encoder_optimizer.step()
+                decoder_optimizer.step()
+                inner_bar.update(BATCH_SIZE)
+                inner_bar.set_description("Avg loss %.2f" % (loss.item()/out_seq_len))
+        outer_bar.update(1)
 
-train(1, 0)
