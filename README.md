@@ -1,3 +1,4 @@
 # Machine Learning Mini-projects
 
-- [autoencoder for phonetic word embeddings](./phonetics)
+- [english phonetics](./phonetics) - seq2seq model for translating english words to their phonetic transcription
+- [cart pole](./cart_pole) - reinforcement learning agent that learns to balance a pole without falling over
