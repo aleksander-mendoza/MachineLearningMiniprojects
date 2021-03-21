@@ -17,7 +17,7 @@ EPOCHS = 200
 TEACHER_FORCING_PROBABILITY = 0.4
 LEARNING_RATE = 0.01
 BATCH_SIZE = 32
-
+plt.ion()
 if not os.path.isfile(DATA_FILE):
     import requests
 
@@ -68,7 +68,6 @@ with open(DATA_FILE) as f:
         text = torch.tensor([IN_ALPHABET[letter] for letter in text], dtype=torch.int)
         phonemes = torch.tensor([OUT_ALPHABET[letter] for letter in phonemes], dtype=torch.int)
         DATA.append((text, phonemes))
-        TOTAL_OUT_LEN += len(phonemes)
 
 print("Number of samples ", len(DATA))
 random.shuffle(DATA)
@@ -79,6 +78,16 @@ DATA = DATA[:TRAINING_SET_SIZE]
 assert len(DATA) % BATCH_SIZE == 0
 print("Training samples ", len(DATA))
 print("Evaluation samples ", len(EVAL))
+print("Input alphabet ", IN_LOOKUP)
+print("Output alphabet ", OUT_LOOKUP)
+TOTAL_TRAINING_OUT_LEN = 0
+TOTAL_EVALUATION_OUT_LEN = 0
+for text, phonemes in DATA:
+    TOTAL_TRAINING_OUT_LEN += len(phonemes)
+for text, phonemes in EVAL:
+    TOTAL_EVALUATION_OUT_LEN += len(phonemes)
+print("Total output length in training set", TOTAL_TRAINING_OUT_LEN)
+print("Total output length in evaluation set", TOTAL_EVALUATION_OUT_LEN)
 
 
 def shuffle_but_keep_sorted_by_output_lengths(data: [(torch.tensor, torch.tensor)]):
@@ -112,6 +121,7 @@ class EncoderRNN(nn.Module):
                           hidden_size=hidden_size,
                           num_layers=self.hidden_layers,
                           batch_first=True)
+        self.lin = nn.Linear(hidden_size, hidden_size)
 
     def forward(self, padded_in, in_lengths, hidden):
         batch_size = len(in_lengths)
@@ -123,7 +133,8 @@ class EncoderRNN(nn.Module):
         unpacked, _ = torch.nn.utils.rnn.pad_packed_sequence(gru_out, batch_first=True)
         assert unpacked.size() == (batch_size, max(in_lengths), self.hidden_size)
         assert hidden.size() == (self.hidden_layers, batch_size, self.hidden_size)
-        return unpacked, hidden
+        final_hidden = self.lin(hidden)
+        return unpacked, final_hidden
 
     def init_hidden(self, batch_size, device):
         return torch.zeros(self.hidden_layers, batch_size, self.hidden_size, device=device)
@@ -169,6 +180,7 @@ def run(encoder, decoder, batch_in, i_lengths, batch_out, o_lengths, teacher_for
     assert batch_in.size() == (BATCH_SIZE, in_seq_len)
     assert batch_out.size() == (BATCH_SIZE, out_seq_len)
     loss = 0
+    total_correct_predictions = 0
     hidden = encoder.init_hidden(BATCH_SIZE, device=DEVICE)
     encoder_output, hidden = encoder(batch_in, i_lengths, hidden)
     output = batch_out[:, 0]
@@ -179,9 +191,14 @@ def run(encoder, decoder, batch_in, i_lengths, batch_out, o_lengths, teacher_for
             out = output
         output, hidden = decoder(out, hidden)
         output = output.squeeze(1)
-        loss += criterion(output, batch_out[:, i + 1])
-        output = torch.argmax(output, 1)
-    return loss
+        expected_output = batch_out[:, i + 1]
+        if criterion is not None:
+            loss += criterion(output, expected_output)
+        argmax_output = torch.argmax(output, 1)
+        with torch.no_grad():
+            total_correct_predictions += (argmax_output == expected_output).sum().item()
+        output = argmax_output
+    return loss, total_correct_predictions
 
 
 eval_bar = tqdm(total=len(EVAL), position=2)
@@ -191,20 +208,21 @@ def eval_model(encoder, decoder):
     eval_bar.reset()
     eval_bar.set_description("Evaluation")
     with torch.no_grad():
-        loss = 0
+        total_correct_predictions = 0
         for batch_in, i_lengths, batch_out, o_lengths in DataLoader(dataset=EVAL, drop_last=True,
                                                                     batch_size=BATCH_SIZE,
                                                                     collate_fn=collate):
-            loss += run(encoder=encoder,
-                        decoder=decoder,
-                        criterion=lambda x, y: (torch.argmax(x, 1) == y).sum(),
-                        i_lengths=i_lengths,
-                        o_lengths=o_lengths,
-                        batch_in=batch_in,
-                        batch_out=batch_out,
-                        teacher_forcing_prob=0).item()
+            loss, correct_predictions = run(encoder=encoder,
+                                            decoder=decoder,
+                                            criterion=None,
+                                            i_lengths=i_lengths,
+                                            o_lengths=o_lengths,
+                                            batch_in=batch_in,
+                                            batch_out=batch_out,
+                                            teacher_forcing_prob=0)
+            total_correct_predictions += correct_predictions
             eval_bar.update(BATCH_SIZE)
-        return loss
+        return total_correct_predictions
 
 
 outer_bar = tqdm(total=EPOCHS, position=0)
@@ -212,32 +230,34 @@ inner_bar = tqdm(total=len(DATA), position=1)
 
 
 def train_model(encoder, decoder):
-    encoder_optimizer = optim.SGD(filter(lambda x: x.requires_grad, encoder.parameters()),
+    encoder_optimizer = optim.Adam(filter(lambda x: x.requires_grad, encoder.parameters()),
                                   lr=LEARNING_RATE)
-    decoder_optimizer = optim.SGD(filter(lambda x: x.requires_grad, decoder.parameters()),
+    decoder_optimizer = optim.Adam(filter(lambda x: x.requires_grad, decoder.parameters()),
                                   lr=LEARNING_RATE)
     criterion = nn.NLLLoss(ignore_index=OUT_ALPHABET[''])
-    total_losses = []
+    train_snapshots_percentage = [0]
+    train_snapshots = [0]
     eval_snapshots = [eval_model(encoder, decoder)]
-    eval_snapshots_percentage = [eval_snapshots[0] / TOTAL_OUT_LEN]
+    eval_snapshots_percentage = [eval_snapshots[0] / TOTAL_EVALUATION_OUT_LEN]
     outer_bar.reset()
-
     outer_bar.set_description("Epochs")
     for epoch in range(EPOCHS):
         shuffle_but_keep_sorted_by_output_lengths(DATA)
         total_loss = 0
+        total_correct_predictions = 0
         inner_bar.reset()
         for batch_in, i_lengths, batch_out, o_lengths in DataLoader(dataset=DATA, drop_last=True,
                                                                     batch_size=BATCH_SIZE,
                                                                     collate_fn=collate):
-            loss = run(encoder=encoder,
-                       decoder=decoder,
-                       criterion=criterion,
-                       i_lengths=i_lengths,
-                       o_lengths=o_lengths,
-                       batch_in=batch_in,
-                       batch_out=batch_out,
-                       teacher_forcing_prob=TEACHER_FORCING_PROBABILITY)
+            loss, correct_predictions = run(encoder=encoder,
+                                            decoder=decoder,
+                                            criterion=criterion,
+                                            i_lengths=i_lengths,
+                                            o_lengths=o_lengths,
+                                            batch_in=batch_in,
+                                            batch_out=batch_out,
+                                            teacher_forcing_prob=TEACHER_FORCING_PROBABILITY)
+            total_correct_predictions += correct_predictions
             loss.backward()
             encoder_optimizer.step()
             decoder_optimizer.step()
@@ -245,19 +265,26 @@ def train_model(encoder, decoder):
             loss_scalar = loss.item()
             total_loss += loss_scalar
             inner_bar.set_description("Avg loss %.2f" % (loss_scalar / batch_out.size()[1]))
-        total_losses.append(total_loss / TOTAL_OUT_LEN)
+        train_snapshots.append(total_correct_predictions)
+        train_snapshots_percentage.append(total_correct_predictions / TOTAL_TRAINING_OUT_LEN)
         eval_snapshots.append(eval_model(encoder, decoder))
-        eval_snapshots_percentage.append(eval_snapshots[-1] / TOTAL_OUT_LEN)
-        outer_bar.set_description("Epochs (loss %.2f)" % total_losses[-1])
-        outer_bar.update(1)
-        plt.plot(total_losses)
-        plt.plot(eval_snapshots)
-        plt.plot(eval_snapshots_percentage)
+        eval_snapshots_percentage.append(eval_snapshots[-1] / TOTAL_EVALUATION_OUT_LEN)
+        plt.clf()
+        plt.plot(train_snapshots_percentage, label="Training %")
+        plt.plot(eval_snapshots_percentage, label="Evaluation %")
+        plt.legend(loc="upper left")
         plt.pause(interval=0.01)
+        print()
+        print("Total epoch loss:", total_loss)
+        print("Total epoch avg loss:", total_loss/TOTAL_TRAINING_OUT_LEN)
+        print("Training snapshots:", train_snapshots)
+        print("Training snapshots(%):", train_snapshots_percentage)
         print("Evaluation snapshots:", eval_snapshots)
         print("Evaluation snapshots(%):", eval_snapshots_percentage)
+        outer_bar.set_description("Epochs")
+        outer_bar.update(1)
 
 
 plt.show()
 
-train_model(EncoderRNN(3).to(DEVICE), DecoderRNN(3).to(DEVICE))
+train_model(EncoderRNN(16).to(DEVICE), DecoderRNN(16).to(DEVICE))
