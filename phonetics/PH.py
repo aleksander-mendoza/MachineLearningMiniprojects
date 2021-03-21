@@ -13,10 +13,10 @@ import os
 from tqdm import tqdm
 
 DATA_FILE = 'en_US.txt'
-EPOCHS = 200
+EPOCHS = 4000
 TEACHER_FORCING_PROBABILITY = 0.4
 LEARNING_RATE = 0.01
-BATCH_SIZE = 32
+BATCH_SIZE = 1024
 plt.ion()
 if not os.path.isfile(DATA_FILE):
     import requests
@@ -61,17 +61,17 @@ DATA: [(torch.tensor, torch.tensor)] = []
 
 with open(DATA_FILE) as f:
     for line in f:
-        text, phonemes = line.strip().split("\t")
-        phonemes = phonemes.split(",")[0]
+        text, phonemes = line.split("\t")
+        phonemes = phonemes.strip().split(",")[0]
         phonemes = '^' + re.sub(r'[/\'ˈˌ]', '', phonemes) + '$'
-        text = '^' + re.sub(r'[^a-z]', '', text) + '$'
+        text = '^' + re.sub(r'[^a-z]', '', text.strip()) + '$'
         text = torch.tensor([IN_ALPHABET[letter] for letter in text], dtype=torch.int)
         phonemes = torch.tensor([OUT_ALPHABET[letter] for letter in phonemes], dtype=torch.int)
         DATA.append((text, phonemes))
-
-print("Number of samples ", len(DATA))
 random.shuffle(DATA)
-TRAINING_SET_SIZE = int(len(DATA) * 0.8)
+# DATA = DATA[:2000]
+print("Number of samples ", len(DATA))
+TRAINING_SET_SIZE = int(len(DATA) * 0.5)
 TRAINING_SET_SIZE -= TRAINING_SET_SIZE % BATCH_SIZE
 EVAL = DATA[TRAINING_SET_SIZE:]
 DATA = DATA[:TRAINING_SET_SIZE]
@@ -86,6 +86,8 @@ for text, phonemes in DATA:
     TOTAL_TRAINING_OUT_LEN += len(phonemes)
 for text, phonemes in EVAL:
     TOTAL_EVALUATION_OUT_LEN += len(phonemes)
+TOTAL_EVALUATION_OUT_LEN -= len(EVAL)  # do not count the beginning of line ^ character
+TOTAL_TRAINING_OUT_LEN -= len(DATA)
 print("Total output length in training set", TOTAL_TRAINING_OUT_LEN)
 print("Total output length in evaluation set", TOTAL_EVALUATION_OUT_LEN)
 
@@ -110,48 +112,53 @@ def collate(batch: [(torch.tensor, torch.tensor)]):
 
 
 class EncoderRNN(nn.Module):
-    def __init__(self, hidden_size):
+    def __init__(self, hidden_size, layers):
         super(EncoderRNN, self).__init__()
         self.hidden_size = hidden_size
-        self.hidden_layers = 1
+        self.hidden_layers = layers
         self.embedding = nn.Embedding(num_embeddings=len(IN_ALPHABET),
                                       embedding_dim=hidden_size,
                                       padding_idx=IN_ALPHABET[''])
-        self.gru = nn.GRU(input_size=hidden_size,
-                          hidden_size=hidden_size,
-                          num_layers=self.hidden_layers,
-                          batch_first=True)
-        self.lin = nn.Linear(hidden_size, hidden_size)
+        self.gru = nn.LSTM(input_size=hidden_size,
+                           hidden_size=hidden_size,
+                           num_layers=self.hidden_layers,
+                           batch_first=True)
+        # self.lin = nn.Linear(hidden_size, hidden_size)
 
-    def forward(self, padded_in, in_lengths, hidden):
+    def forward(self, padded_in, in_lengths):
         batch_size = len(in_lengths)
-        assert hidden.size() == (self.hidden_layers, batch_size, self.hidden_size)
+        # hidden_state, cell_state = hidden
+        # assert hidden_state.size() == (self.hidden_layers, batch_size, self.hidden_size)
+        # assert cell_state.size() == (self.hidden_layers, batch_size, self.hidden_size)
         embedded = self.embedding(padded_in)
         assert embedded.size() == (batch_size, max(in_lengths), self.hidden_size)
         packed = torch.nn.utils.rnn.pack_padded_sequence(embedded, in_lengths, batch_first=True)
-        gru_out, hidden = self.gru(packed, hidden)
+        gru_out, hidden = self.gru(packed)
         unpacked, _ = torch.nn.utils.rnn.pad_packed_sequence(gru_out, batch_first=True)
         assert unpacked.size() == (batch_size, max(in_lengths), self.hidden_size)
-        assert hidden.size() == (self.hidden_layers, batch_size, self.hidden_size)
-        final_hidden = self.lin(hidden)
-        return unpacked, final_hidden
+        # assert hidden.size() == (self.hidden_layers, batch_size, self.hidden_size)
+        # h, cell_state = hidden
+        # final_hidden = self.lin(h)
+        return unpacked, hidden
 
     def init_hidden(self, batch_size, device):
-        return torch.zeros(self.hidden_layers, batch_size, self.hidden_size, device=device)
+        hidden_state = torch.zeros(self.hidden_layers, batch_size, self.hidden_size, device=device)
+        cell_state = torch.zeros(self.hidden_layers, batch_size, self.hidden_size, device=device)
+        return hidden_state, cell_state
 
 
 class DecoderRNN(nn.Module):
-    def __init__(self, hidden_size):
+    def __init__(self, hidden_size, layers):
         super(DecoderRNN, self).__init__()
         self.hidden_size = hidden_size
-        self.hidden_layers = 1
+        self.hidden_layers = layers
         self.embedding = nn.Embedding(num_embeddings=len(OUT_ALPHABET),
                                       embedding_dim=hidden_size,
                                       padding_idx=OUT_ALPHABET[''])
-        self.gru = nn.GRU(input_size=hidden_size,
-                          hidden_size=hidden_size,
-                          num_layers=self.hidden_layers,
-                          batch_first=True)
+        self.gru = nn.LSTM(input_size=hidden_size,
+                           hidden_size=hidden_size,
+                           num_layers=self.hidden_layers,
+                           batch_first=True)
         self.out = nn.Linear(hidden_size, len(OUT_ALPHABET))
         self.softmax = nn.LogSoftmax(dim=2)
 
@@ -159,11 +166,13 @@ class DecoderRNN(nn.Module):
         batch_size = len(padded_out)
         padded_out = padded_out.unsqueeze(1)
         seq_length = 1
-        assert hidden.size() == (self.hidden_layers, batch_size, self.hidden_size)
+        hidden_state, cell_state = hidden
+        assert hidden_state.size() == (self.hidden_layers, batch_size, self.hidden_size)
+        assert cell_state.size() == (self.hidden_layers, batch_size, self.hidden_size)
         embedded = self.embedding(padded_out)
-        assert embedded.size() == (batch_size, self.hidden_layers, self.hidden_size)
+        assert embedded.size() == (batch_size, seq_length, self.hidden_size)
         gru_out, hidden = self.gru(embedded, hidden)
-        assert hidden.size() == (self.hidden_layers, batch_size, self.hidden_size)
+        # assert hidden.size() == (self.hidden_layers, batch_size, self.hidden_size)
         assert gru_out.size() == (batch_size, seq_length, self.hidden_size)
         lin = self.out(gru_out)
         assert lin.size() == (batch_size, seq_length, len(OUT_ALPHABET))
@@ -181,8 +190,7 @@ def run(encoder, decoder, batch_in, i_lengths, batch_out, o_lengths, teacher_for
     assert batch_out.size() == (BATCH_SIZE, out_seq_len)
     loss = 0
     total_correct_predictions = 0
-    hidden = encoder.init_hidden(BATCH_SIZE, device=DEVICE)
-    encoder_output, hidden = encoder(batch_in, i_lengths, hidden)
+    encoder_output, hidden = encoder(batch_in, i_lengths)
     output = batch_out[:, 0]
     for i in range(out_seq_len - 1):
         if random.random() < teacher_forcing_prob:
@@ -231,9 +239,9 @@ inner_bar = tqdm(total=len(DATA), position=1)
 
 def train_model(encoder, decoder):
     encoder_optimizer = optim.Adam(filter(lambda x: x.requires_grad, encoder.parameters()),
-                                  lr=LEARNING_RATE)
+                                   lr=LEARNING_RATE)
     decoder_optimizer = optim.Adam(filter(lambda x: x.requires_grad, decoder.parameters()),
-                                  lr=LEARNING_RATE)
+                                   lr=LEARNING_RATE)
     criterion = nn.NLLLoss(ignore_index=OUT_ALPHABET[''])
     train_snapshots_percentage = [0]
     train_snapshots = [0]
@@ -249,6 +257,8 @@ def train_model(encoder, decoder):
         for batch_in, i_lengths, batch_out, o_lengths in DataLoader(dataset=DATA, drop_last=True,
                                                                     batch_size=BATCH_SIZE,
                                                                     collate_fn=collate):
+            encoder_optimizer.zero_grad()
+            decoder_optimizer.zero_grad()
             loss, correct_predictions = run(encoder=encoder,
                                             decoder=decoder,
                                             criterion=criterion,
@@ -274,17 +284,15 @@ def train_model(encoder, decoder):
         plt.plot(eval_snapshots_percentage, label="Evaluation %")
         plt.legend(loc="upper left")
         plt.pause(interval=0.01)
-        print()
-        print("Total epoch loss:", total_loss)
-        print("Total epoch avg loss:", total_loss/TOTAL_TRAINING_OUT_LEN)
-        print("Training snapshots:", train_snapshots)
-        print("Training snapshots(%):", train_snapshots_percentage)
-        print("Evaluation snapshots:", eval_snapshots)
-        print("Evaluation snapshots(%):", eval_snapshots_percentage)
+        # print()
+        # print("Total epoch loss:", total_loss)
+        # print("Total epoch avg loss:", total_loss / TOTAL_TRAINING_OUT_LEN)
+        # print("Training snapshots:", train_snapshots)
+        # print("Training snapshots(%):", train_snapshots_percentage)
+        # print("Evaluation snapshots:", eval_snapshots)
+        # print("Evaluation snapshots(%):", eval_snapshots_percentage)
         outer_bar.set_description("Epochs")
         outer_bar.update(1)
 
 
-plt.show()
-
-train_model(EncoderRNN(16).to(DEVICE), DecoderRNN(16).to(DEVICE))
+train_model(EncoderRNN(32, 4).to(DEVICE), DecoderRNN(32, 4).to(DEVICE))
