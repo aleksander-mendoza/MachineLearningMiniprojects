@@ -5,16 +5,35 @@ import torchvision as tv
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
 from torchvision.transforms import transforms
+from tqdm import tqdm
+from matplotlib import pyplot as plt
 
 # If you get 503 while downloading MNIST then download it manually
 # wget www.di.ens.fr/~lelarge/MNIST.tar.gz
 # tar -zxvf MNIST.tar.gz
+BATCH_SIZE = 32
+
+DEVICE = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 
 transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
 trainset = tv.datasets.MNIST(root='.', train=True, download=True, transform=transform)
-dataloader = DataLoader(trainset, batch_size=32, shuffle=False, num_workers=0)
-testset = tv.datasets.MNIST(root='.', train=False, download=True, transform=transform)
-testloader = DataLoader(testset, batch_size=4, shuffle=False, num_workers=0)
+dataloader = DataLoader(trainset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
+
+
+def imshow(inp):
+    inp = inp.cpu().detach().numpy()
+    mean = 0.1307
+    std = 0.3081
+    inp = ((mean * inp) + std)
+    plt.clf()
+    plt.imshow(inp, cmap='gray')
+    plt.pause(interval=0.01)
+
+
+def bimshow(batch):
+    with torch.no_grad():
+        output = model(batch.to(DEVICE)).cpu()
+        imshow(torch.cat((batch.view(-1, 28), output.view(-1, 28)), 1))
 
 
 class Autoencoder(nn.Module):
@@ -53,22 +72,26 @@ class Autoencoder(nn.Module):
         x = F.relu(x, True)
         x = self.conv6(x)
         x = F.relu(x, True)
-        x = torch.sigmoid(x)
+        # x = torch.sigmoid(x)
         return x
 
 
 # Defining Parameters
 
-num_epochs = 5
+EPOCHS = 1000
 batch_size = 128
-model = Autoencoder(28, 28, 1024).cpu()
+model = Autoencoder(28, 28, 32).to(DEVICE)
 distance = nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), weight_decay=1e-5)
+outer_bar = tqdm(total=EPOCHS, position=0)
+inner_bar = tqdm(total=len(trainset), position=1)
 
-for epoch in range(num_epochs):
+outer_bar.set_description("Epochs")
+for epoch in range(EPOCHS):
+    inner_bar.reset()
     for data in dataloader:
         img, _ = data
-        img = Variable(img).cpu()
+        img = img.to(DEVICE)
         # ===================forward=====================
         output = model(img)
         loss = distance(output, img)
@@ -76,5 +99,8 @@ for epoch in range(num_epochs):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-    # ===================log========================
-    print('epoch [{}/{}], loss:{:.4f}'.format(epoch + 1, num_epochs, loss.item()))
+
+        inner_bar.update(BATCH_SIZE)
+        inner_bar.set_description("Avg loss %.2f" % (loss.item() / BATCH_SIZE))
+    outer_bar.update(1)
+    bimshow(next(iter(dataloader))[0])
