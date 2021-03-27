@@ -85,7 +85,6 @@ distance = nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), weight_decay=1e-5)
 outer_bar = tqdm(total=EPOCHS, position=0)
 inner_bar = tqdm(total=len(trainset), position=1)
-
 outer_bar.set_description("Epochs")
 for epoch in range(EPOCHS):
     inner_bar.reset()

@@ -3,18 +3,35 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision as tv
 from torch.autograd import Variable
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from torchvision.transforms import transforms
+from tqdm import tqdm
+from matplotlib import pyplot as plt
 
 # If you get 503 while downloading MNIST then download it manually
 # wget www.di.ens.fr/~lelarge/MNIST.tar.gz
 # tar -zxvf MNIST.tar.gz
 
-transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
-trainset = tv.datasets.MNIST(root='.', train=True, download=True, transform=transform)
-dataloader = DataLoader(trainset, batch_size=32, shuffle=False, num_workers=0)
-testset = tv.datasets.MNIST(root='.', train=False, download=True, transform=transform)
-testloader = DataLoader(testset, batch_size=4, shuffle=False, num_workers=0)
+BATCH_SIZE = 32
+
+DEVICE = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
+
+transform = transforms.Compose([transforms.ToTensor()])
+trainset = Subset(tv.datasets.MNIST(root='.', train=True, download=True, transform=transform),range(2048))
+dataloader = DataLoader(trainset, batch_size=32, shuffle=True, num_workers=0)
+
+
+def imshow(inp):
+    inp = inp.cpu().detach().numpy()
+    plt.clf()
+    plt.imshow(inp, cmap='gray')
+    plt.pause(interval=0.01)
+
+
+def bimshow(batch):
+    with torch.no_grad():
+        output = model(batch.to(DEVICE))[0].cpu()
+        imshow(torch.cat((batch.view(-1, 28), output.view(-1, 28)), 1))
 
 
 class VariationalAutoencoder(nn.Module):
@@ -27,11 +44,11 @@ class VariationalAutoencoder(nn.Module):
         self.conv2 = nn.Conv2d(2, 4, kernel_size=5)
         self.conv3 = nn.Conv2d(4, 8, kernel_size=5)
         self.hidden_size = (self.width - 4 * 3) * (self.height - 4 * 3) * 8
-        self.lin1 = nn.Linear(self.hidden_size, self.hidden_size / 2)
-        self.mu = nn.Linear(self.hidden_size / 2, bottleneck)
-        self.log_var = nn.Linear(self.hidden_size / 2, bottleneck)
-        self.lin2 = nn.Linear(bottleneck, self.hidden_size / 2)
-        self.lin3 = nn.Linear(self.hidden_size / 2, self.hidden_size)
+        self.lin1 = nn.Linear(self.hidden_size, self.hidden_size)
+        self.mu = nn.Linear(self.hidden_size, bottleneck)
+        self.log_var = nn.Linear(self.hidden_size, bottleneck)
+        self.lin2 = nn.Linear(bottleneck, self.hidden_size)
+        self.lin3 = nn.Linear(self.hidden_size, self.hidden_size)
         self.conv4 = nn.ConvTranspose2d(8, 4, kernel_size=5)
         self.conv5 = nn.ConvTranspose2d(4, 2, kernel_size=5)
         self.conv6 = nn.ConvTranspose2d(2, 1, kernel_size=5)
@@ -45,7 +62,7 @@ class VariationalAutoencoder(nn.Module):
         x = self.conv3(x)
         x = F.relu(x, True)
         x = x.view(batch_size, self.hidden_size)
-        x = self.lin1(x)
+        x = x + self.lin1(x)
         x = F.relu(x, True)
 
         mu = self.mu(x)
@@ -56,7 +73,7 @@ class VariationalAutoencoder(nn.Module):
 
         x = self.lin2(x)
         x = F.relu(x, True)
-        x = self.lin3(x)
+        x = x + self.lin3(x)
         x = F.relu(x, True)
         x = x.view(batch_size, 8, self.width - 4 * 3, self.height - 4 * 3)
         x = self.conv4(x)
@@ -64,29 +81,36 @@ class VariationalAutoencoder(nn.Module):
         x = self.conv5(x)
         x = F.relu(x, True)
         x = self.conv6(x)
-        x = F.relu(x, True)
         x = torch.sigmoid(x)
-        return x
+        return x, mu, log_var
 
 
 # Defining Parameters
 
-num_epochs = 5
+EPOCHS = 1000
 batch_size = 128
-model = VariationalAutoencoder(28, 28, 1024).cpu()
-distance = nn.MSELoss()
-optimizer = torch.optim.Adam(model.parameters(), weight_decay=1e-5)
-
-for epoch in range(num_epochs):
+model = VariationalAutoencoder(28, 28, 4).to(DEVICE)
+distance = nn.BCELoss(reduction="sum")
+optimizer = torch.optim.Adam(model.parameters())
+outer_bar = tqdm(total=EPOCHS, position=0)
+inner_bar = tqdm(total=len(trainset), position=1)
+outer_bar.set_description("Epochs")
+for epoch in range(EPOCHS):
+    inner_bar.reset()
     for data in dataloader:
         img, _ = data
-        img = Variable(img).cpu()
+        img = Variable(img).to(DEVICE)
         # ===================forward=====================
-        output = model(img)
-        loss = distance(output, img)
+        output, mean, log_variance = model(img)
+        KLD = - 0.5 * torch.sum(1 + log_variance - mean.pow(2) - log_variance.exp())
+        loss = distance(output, img) + KLD
+        # print(loss.item())
         # ===================backward====================
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        inner_bar.update(BATCH_SIZE)
+        inner_bar.set_description("Avg loss %.2f" % (loss.item() / BATCH_SIZE))
     # ===================log========================
-    print('epoch [{}/{}], loss:{:.4f}'.format(epoch + 1, num_epochs, loss.item()))
+    outer_bar.update(1)
+    bimshow(next(iter(dataloader))[0])
