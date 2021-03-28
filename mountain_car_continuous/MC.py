@@ -10,17 +10,17 @@ import select
 
 DEVICE = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 
-env = gym.make("BipedalWalker-v3")
+env = gym.make("MountainCarContinuous-v0")
 MEMORY = deque(maxlen=10000)
 EPSILON = 1  # exploratory action probability
 GAMMA = 1  # future reward discounting
 SAMPLES = []
 EPSILON_DECAY = 0.999
 N_EPISODES = 20000
-BATCH_SIZE = 256
-ACTIONS_NUM = 4
-STATES_NUM = 6 * 4
-REWARD_THRESHOLD_TO_SAVE = -10000
+BATCH_SIZE = 1024
+ACTIONS_NUM = 1  # 4
+STATES_NUM = 2  # 6 * 4
+REWARD_THRESHOLD_TO_SAVE = 90
 TAU = 1e-2
 
 
@@ -76,10 +76,10 @@ class Actor(nn.Module):
         return x
 
 
-actor = Actor(STATES_NUM, 8, ACTIONS_NUM).to(DEVICE)
-actor_target = Actor(STATES_NUM, 8, ACTIONS_NUM).to(DEVICE)
-critic = Critic(STATES_NUM + ACTIONS_NUM, 8, 1).to(DEVICE)
-critic_target = Critic(STATES_NUM + ACTIONS_NUM, 8, 1).to(DEVICE)
+actor = Actor(STATES_NUM, 4, ACTIONS_NUM).to(DEVICE)
+actor_target = Actor(STATES_NUM, 4, ACTIONS_NUM).to(DEVICE)
+critic = Critic(STATES_NUM + ACTIONS_NUM, 4, 1).to(DEVICE)
+critic_target = Critic(STATES_NUM + ACTIONS_NUM, 4, 1).to(DEVICE)
 
 # We initialize the target networks as copies of the original networks
 for target_param, param in zip(actor_target.parameters(), actor.parameters()):
@@ -135,6 +135,7 @@ def train():
         target_param.data.copy_(param.data * TAU + target_param.data * (1.0 - TAU))
 
 
+print("type anything to toggle rendering")
 noise = OUNoise(env.action_space)
 visualize = False
 for e in range(N_EPISODES):
@@ -149,6 +150,7 @@ for e in range(N_EPISODES):
     done = False
     i = 0
     total_reward = 0
+    rewards = []
     while not done:
         with torch.no_grad():
             action = actor(state.unsqueeze(0).to(DEVICE)).squeeze(0).cpu()
@@ -157,13 +159,16 @@ for e in range(N_EPISODES):
         if visualize:
             env.render()
         next_state = torch.tensor(next_state, dtype=torch.float)
-        MEMORY.append((state, action, reward, next_state, done))
+        rewards.append((state, action, reward, next_state, done))
         state = next_state
         i += 1
         total_reward += reward
-        train()
+    if total_reward >= REWARD_THRESHOLD_TO_SAVE:
+        MEMORY += rewards
     total_reward_per_episode.append(total_reward)
     epsilon_per_episode.append(EPSILON * 100)
+    if len(MEMORY) >= BATCH_SIZE:
+        train()
     if e % 1 == 0:
         plt.clf()
         plt.plot(total_reward_per_episode, linestyle="None", marker='.')
