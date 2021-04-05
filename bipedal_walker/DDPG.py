@@ -267,7 +267,7 @@ class ReplayBuffer:
         return len(self.memory)
 
 
-env = gym.make('MountainCarContinuous-v0')
+env = gym.make('BipedalWalker-v3')
 env.seed(10)
 agent = Agent(state_size=env.observation_space.shape[0], action_size=env.action_space.shape[0], random_seed=10)
 

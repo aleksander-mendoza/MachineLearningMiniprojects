@@ -15,12 +15,12 @@ MEMORY = deque(maxlen=10000)
 EPSILON = 1  # exploratory action probability
 GAMMA = 1  # future reward discounting
 SAMPLES = []
-EPSILON_DECAY = 0.999
+EPSILON_DECAY = 0.99
 N_EPISODES = 20000
 BATCH_SIZE = 1024
-ACTIONS_NUM = 1  # 4
-STATES_NUM = 2  # 6 * 4
-REWARD_THRESHOLD_TO_SAVE = 90
+ACTIONS_NUM = env.action_space.shape[0]  # 4
+STATES_NUM = env.observation_space.shape[0]   # 6 * 4
+REWARD_THRESHOLD_TO_SAVE = -90
 TAU = 1e-2
 
 
@@ -100,6 +100,7 @@ def train():
     state_batch = torch.zeros((BATCH_SIZE, STATES_NUM))
     action_batch = torch.zeros((BATCH_SIZE, ACTIONS_NUM))
     next_state_batch = torch.zeros((BATCH_SIZE, STATES_NUM))
+    done_batch = torch.zeros((BATCH_SIZE, STATES_NUM))
 
     minibatch = random.sample(MEMORY, min(len(MEMORY), BATCH_SIZE))
     for i, (state, action, reward, next_state, done) in enumerate(minibatch):
@@ -108,14 +109,16 @@ def train():
         state_batch[i] = state
         action_batch[i] = action
         reward_batch[i] = reward
+        done_batch[i] = done
     next_state_batch = next_state_batch.to(DEVICE)
     action_batch = action_batch.to(DEVICE)
     state_batch = state_batch.to(DEVICE)
+    done_batch = done_batch.to(DEVICE)
     reward_batch = reward_batch.unsqueeze(1).to(DEVICE)
     q_vals = critic(state_batch, action_batch)
     next_action = actor_target(next_state_batch)
     next_q = critic_target(next_state_batch, next_action.detach())
-    q_prime = reward_batch + GAMMA * next_q
+    q_prime = reward_batch + GAMMA * next_q * (1 - done_batch)
     critic_loss = critic_criterion(q_vals, q_prime)
 
     critic_optimizer.zero_grad()

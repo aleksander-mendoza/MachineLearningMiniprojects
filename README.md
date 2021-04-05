@@ -10,9 +10,11 @@
    - [(AE) Autoencoder solution](./mnist_autoencoder/MAE.py)
    - [(VAE) Variational autoencoder solution](./mnist_autoencoder/VAE.py)
 - [mountain car](./mountain_car_continuous) -  reinforcement learning agent that learns to drive a car uphill  
-   - [(DDPG) Deep deterministic policy gradient solution](./mountain_car_continuous)
+   - [(DDPG) Deep deterministic policy gradient solution](./mountain_car_continuous/MC.py)
+   - [(PPO) Proximal policy optimisation solution](./mountain_car_continuous/PPO.py) (copied from https://github.com/nikhilbarhate99/PPO-PyTorch)
 - [bipedal walker](./bipedal_walker) -  reinforcement learning agent that learns to walk on two feet (on flat terrain)  
-   - [(PPO) Proximal policy optimisation solution](./mountain_car_continuous) (copied from https://github.com/nikhilbarhate99/PPO-PyTorch)
+   - [(DDPG) Deep deterministic policy gradient solution](./bipedal_walker/DDPG.py) (unfortunately the results are somewhat underwhelming)
+   - [(GA) Genetic algorithm](./bipedal_walker/GA.py) (unfortunately the results are poor)
   
         
 
