@@ -91,7 +91,6 @@ TOTAL_TRAINING_OUT_LEN -= len(DATA)
 print("Total output length in training set", TOTAL_TRAINING_OUT_LEN)
 print("Total output length in evaluation set", TOTAL_EVALUATION_OUT_LEN)
 
-
 def shuffle_but_keep_sorted_by_output_lengths(data: [(torch.tensor, torch.tensor)]):
     random.shuffle(data)
     data.sort(reverse=True, key=lambda x: len(x[1]))  # sort with respect to output lengths
@@ -99,8 +98,7 @@ def shuffle_but_keep_sorted_by_output_lengths(data: [(torch.tensor, torch.tensor
 
 def collate(batch: [(torch.tensor, torch.tensor)]):
     batch.sort(reverse=True, key=lambda x: len(x[0]))  # sort with respect to input lengths
-    in_lengths = [len(entry[0]) for entry in batch]
-    max_in_len = max(in_lengths)
+    max_in_len = max(map(lambda entry: len(entry[0]), batch))
     out_lengths = [len(entry[1]) for entry in batch]
     max_out_len = max(out_lengths)
     padded_in = torch.zeros((len(batch), max_in_len), dtype=torch.int)
@@ -108,6 +106,12 @@ def collate(batch: [(torch.tensor, torch.tensor)]):
     for i in range(0, len(batch)):
         padded_in[i, :len(batch[i][0])] = batch[i][0]
         padded_out[i, :len(batch[i][1])] = batch[i][1]
+    rightmost = len(batch)
+    in_lengths = []
+    for i in range(max_in_len):
+        while padded_in[rightmost - 1, i] == 0:
+            rightmost -= 1
+        in_lengths.append(rightmost)
     return padded_in, in_lengths, padded_out, out_lengths
 
 
@@ -119,32 +123,33 @@ class EncoderRNN(nn.Module):
         self.embedding = nn.Embedding(num_embeddings=len(IN_ALPHABET),
                                       embedding_dim=hidden_size,
                                       padding_idx=IN_ALPHABET[''])
-        self.gru = nn.LSTM(input_size=hidden_size,
-                           hidden_size=hidden_size,
-                           num_layers=self.hidden_layers,
-                           batch_first=True)
+        self.gru = nn.ModuleList([nn.LSTMCell(input_size=hidden_size,
+                                              hidden_size=hidden_size) for _ in range(self.hidden_layers)])
         # self.lin = nn.Linear(hidden_size, hidden_size)
 
     def forward(self, padded_in, in_lengths):
-        batch_size = len(in_lengths)
-        # hidden_state, cell_state = hidden
-        # assert hidden_state.size() == (self.hidden_layers, batch_size, self.hidden_size)
-        # assert cell_state.size() == (self.hidden_layers, batch_size, self.hidden_size)
-        embedded = self.embedding(padded_in)
-        assert embedded.size() == (batch_size, max(in_lengths), self.hidden_size)
-        packed = torch.nn.utils.rnn.pack_padded_sequence(embedded, in_lengths, batch_first=True)
-        gru_out, hidden = self.gru(packed)
-        unpacked, _ = torch.nn.utils.rnn.pad_packed_sequence(gru_out, batch_first=True)
-        assert unpacked.size() == (batch_size, max(in_lengths), self.hidden_size)
-        # assert hidden.size() == (self.hidden_layers, batch_size, self.hidden_size)
-        # h, cell_state = hidden
-        # final_hidden = self.lin(h)
-        return unpacked, hidden
-
-    def init_hidden(self, batch_size, device):
-        hidden_state = torch.zeros(self.hidden_layers, batch_size, self.hidden_size, device=device)
-        cell_state = torch.zeros(self.hidden_layers, batch_size, self.hidden_size, device=device)
-        return hidden_state, cell_state
+        batch_size = padded_in.size()[0]
+        seq_size = padded_in.size()[1]
+        x = self.embedding(padded_in)
+        hidden_state = torch.zeros(self.hidden_layers, batch_size, self.hidden_size, device=DEVICE)
+        cell_state = torch.zeros(self.hidden_layers, batch_size, self.hidden_size, device=DEVICE)
+        assert x.size() == (batch_size, seq_size, self.hidden_size)
+        for symbol, batch_size_per_symbol in enumerate(in_lengths):
+            y = x[:, symbol, :]
+            hidden_state_new = hidden_state.clone()
+            cell_state_new = cell_state.clone()
+            for layer, gru in enumerate(self.gru):
+                hidden_state1 = hidden_state[layer, :batch_size_per_symbol, :]
+                cell_state1 = cell_state[layer, :batch_size_per_symbol, :]
+                (hidden_state2, cell_state2) = gru(y[:batch_size_per_symbol], (hidden_state1, cell_state1))
+                hidden_state2 = hidden_state2 + hidden_state1
+                hidden_state_new[layer, :batch_size_per_symbol, :] = hidden_state2
+                cell_state_new[layer, :batch_size_per_symbol, :] = cell_state2
+                y = hidden_state2
+            hidden_state = hidden_state_new
+            cell_state = cell_state_new
+        assert x.size() == (batch_size, seq_size, self.hidden_size)
+        return hidden_state[-1]
 
 
 class DecoderRNN(nn.Module):
@@ -155,31 +160,43 @@ class DecoderRNN(nn.Module):
         self.embedding = nn.Embedding(num_embeddings=len(OUT_ALPHABET),
                                       embedding_dim=hidden_size,
                                       padding_idx=OUT_ALPHABET[''])
-        self.gru = nn.LSTM(input_size=hidden_size,
-                           hidden_size=hidden_size,
-                           num_layers=self.hidden_layers,
-                           batch_first=True)
+        self.gru = nn.ModuleList([nn.LSTMCell(input_size=hidden_size,
+                                              hidden_size=hidden_size) for _ in range(self.hidden_layers)])
         self.out = nn.Linear(hidden_size, len(OUT_ALPHABET))
-        self.softmax = nn.LogSoftmax(dim=2)
+        self.softmax = nn.LogSoftmax(dim=1)
 
     def forward(self, padded_out, hidden):
         batch_size = len(padded_out)
-        padded_out = padded_out.unsqueeze(1)
-        seq_length = 1
+
         hidden_state, cell_state = hidden
         assert hidden_state.size() == (self.hidden_layers, batch_size, self.hidden_size)
         assert cell_state.size() == (self.hidden_layers, batch_size, self.hidden_size)
+        padded_out = padded_out.unsqueeze(1)
         embedded = self.embedding(padded_out)
-        assert embedded.size() == (batch_size, seq_length, self.hidden_size)
-        gru_out, hidden = self.gru(embedded, hidden)
+        embedded = embedded.squeeze(1)
+        assert embedded.size() == (batch_size, self.hidden_size)
+        y = embedded
+        hidden_state_new = torch.zeros_like(hidden_state)
+        cell_state_new = torch.zeros_like(cell_state)
+        for layer, gru in enumerate(self.gru):
+            (hidden_state2, cell_state2) = gru(y, (hidden_state[layer], cell_state[layer]))
+            hidden_state_new[layer] = hidden_state2
+            cell_state_new[layer] = cell_state2
+            y = hidden_state2+hidden_state[layer]
         # assert hidden.size() == (self.hidden_layers, batch_size, self.hidden_size)
-        assert gru_out.size() == (batch_size, seq_length, self.hidden_size)
-        lin = self.out(gru_out)
-        assert lin.size() == (batch_size, seq_length, len(OUT_ALPHABET))
+        assert y.size() == (batch_size,  self.hidden_size)
+        lin = self.out(y)
+        assert lin.size() == (batch_size,  len(OUT_ALPHABET))
         probabilities = self.softmax(lin)
-        assert probabilities.size() == (batch_size, seq_length, len(OUT_ALPHABET))
-        return probabilities, hidden
+        assert probabilities.size() == (batch_size,  len(OUT_ALPHABET))
+        return probabilities, (hidden_state_new, cell_state_new)
 
+    def init_hiddden(self, hidden):
+        batch_size = hidden.size()[0]
+        hidden_state = torch.zeros(self.hidden_layers, batch_size, self.hidden_size, device=DEVICE)
+        cell_state = torch.zeros(self.hidden_layers, batch_size, self.hidden_size, device=DEVICE)
+        hidden_state[0] = hidden
+        return hidden_state, cell_state
 
 def run(encoder, decoder, batch_in, i_lengths, batch_out, o_lengths, teacher_forcing_prob, criterion):
     batch_in = batch_in.to(DEVICE)
@@ -190,8 +207,9 @@ def run(encoder, decoder, batch_in, i_lengths, batch_out, o_lengths, teacher_for
     assert batch_out.size() == (BATCH_SIZE, out_seq_len)
     loss = 0
     total_correct_predictions = 0
-    encoder_output, hidden = encoder(batch_in, i_lengths)
+    encoder_output = encoder(batch_in, i_lengths)
     output = batch_out[:, 0]
+    hidden = decoder.init_hiddden(encoder_output)
     for i in range(out_seq_len - 1):
         if random.random() < teacher_forcing_prob:
             out = batch_out[:, i]
@@ -238,6 +256,10 @@ inner_bar = tqdm(total=len(DATA), position=1)
 
 
 def train_model(encoder, decoder):
+    if os.path.isfile('encoder.pt'):
+        encoder.load_state_dict(torch.load('encoder.pt'))
+    if os.path.isfile('decoder.pt'):
+        decoder.load_state_dict(torch.load('decoder.pt'))
     encoder_optimizer = optim.Adam(filter(lambda x: x.requires_grad, encoder.parameters()),
                                    lr=LEARNING_RATE)
     decoder_optimizer = optim.Adam(filter(lambda x: x.requires_grad, decoder.parameters()),
@@ -247,6 +269,7 @@ def train_model(encoder, decoder):
     train_snapshots = [0]
     eval_snapshots = [eval_model(encoder, decoder)]
     eval_snapshots_percentage = [eval_snapshots[0] / TOTAL_EVALUATION_OUT_LEN]
+    best_model_so_far = eval_snapshots[0]
     outer_bar.reset()
     outer_bar.set_description("Epochs")
     for epoch in range(EPOCHS):
@@ -277,8 +300,13 @@ def train_model(encoder, decoder):
             inner_bar.set_description("Avg loss %.2f" % (loss_scalar / batch_out.size()[1]))
         train_snapshots.append(total_correct_predictions)
         train_snapshots_percentage.append(total_correct_predictions / TOTAL_TRAINING_OUT_LEN)
-        eval_snapshots.append(eval_model(encoder, decoder))
-        eval_snapshots_percentage.append(eval_snapshots[-1] / TOTAL_EVALUATION_OUT_LEN)
+        new_score = eval_model(encoder, decoder)
+        eval_snapshots.append(new_score)
+        eval_snapshots_percentage.append(new_score / TOTAL_EVALUATION_OUT_LEN)
+        if new_score > best_model_so_far:
+            best_model_so_far = new_score
+            torch.save(encoder.state_dict(), 'encoder.pt')
+            torch.save(decoder.state_dict(), 'decoder.pt')
         plt.clf()
         plt.plot(train_snapshots_percentage, label="Training %")
         plt.plot(eval_snapshots_percentage, label="Evaluation %")
@@ -295,4 +323,4 @@ def train_model(encoder, decoder):
         outer_bar.update(1)
 
 
-train_model(EncoderRNN(128, 2).to(DEVICE), DecoderRNN(128, 2).to(DEVICE))
+train_model(EncoderRNN(128, 8).to(DEVICE), DecoderRNN(128, 8).to(DEVICE))
