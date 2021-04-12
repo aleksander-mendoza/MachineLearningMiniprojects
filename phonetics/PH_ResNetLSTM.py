@@ -34,23 +34,6 @@ IN_LOOKUP = ['', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm'
              'u', 'v', 'w', 'x', 'y', 'z', '$', '^']
 
 
-def extract_alphabet():
-    """
-    This function has been used to extract the alphabet but then it was hard-coded directly into
-    code in order to speed up loading time
-    """
-    with open(DATA_FILE) as f:
-        in_alph = set()
-        out_alph = set()
-        for line in f:
-            text, phonemes = line.strip().split("\t")
-            phonemes = phonemes.split(",")[0]
-            for letter in phonemes:
-                out_alph.add(letter)
-                in_alph.add(letter)
-        return in_alph, out_alph
-
-
 IN_ALPHABET = {letter: idx for idx, letter in enumerate(IN_LOOKUP)}
 
 OUT_ALPHABET = {letter: idx for idx, letter in enumerate(OUT_LOOKUP)}
@@ -142,10 +125,9 @@ class EncoderRNN(nn.Module):
                 hidden_state1 = hidden_state[layer, :batch_size_per_symbol, :]
                 cell_state1 = cell_state[layer, :batch_size_per_symbol, :]
                 (hidden_state2, cell_state2) = gru(y[:batch_size_per_symbol], (hidden_state1, cell_state1))
-                hidden_state2 = hidden_state2 + hidden_state1
                 hidden_state_new[layer, :batch_size_per_symbol, :] = hidden_state2
                 cell_state_new[layer, :batch_size_per_symbol, :] = cell_state2
-                y = hidden_state2
+                y = hidden_state2 + hidden_state1
             hidden_state = hidden_state_new
             cell_state = cell_state_new
         assert x.size() == (batch_size, seq_size, self.hidden_size)
@@ -197,6 +179,7 @@ class DecoderRNN(nn.Module):
         cell_state = torch.zeros(self.hidden_layers, batch_size, self.hidden_size, device=DEVICE)
         hidden_state[0] = hidden
         return hidden_state, cell_state
+
 
 def run(encoder, decoder, batch_in, i_lengths, batch_out, o_lengths, teacher_forcing_prob, criterion):
     batch_in = batch_in.to(DEVICE)
@@ -323,4 +306,4 @@ def train_model(encoder, decoder):
         outer_bar.update(1)
 
 
-train_model(EncoderRNN(128, 8).to(DEVICE), DecoderRNN(128, 8).to(DEVICE))
+train_model(EncoderRNN(512, 2).to(DEVICE), DecoderRNN(512, 2).to(DEVICE))

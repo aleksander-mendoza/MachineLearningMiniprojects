@@ -1,7 +1,7 @@
 # https://arxiv.org/pdf/2001.11692.pdf
 
 
-import math
+import numpy as np
 import unicodedata
 from time import sleep
 
@@ -17,12 +17,13 @@ import os
 from tqdm import tqdm
 from Levenshtein import distance as levenshtein_distance
 
+
 DATA_FILE = 'en_US.txt'
-EPOCHS = 4000
+EPOCHS = 14
 TEACHER_FORCING_PROBABILITY = 0.4
 LEARNING_RATE = 0.01
 BATCH_SIZE = 512
-plt.ion()
+
 if not os.path.isfile(DATA_FILE):
     import requests
 
@@ -46,6 +47,8 @@ TOTAL_OUT_LEN = 0
 
 DATA: [(torch.tensor, torch.tensor)] = []
 
+TEXT: [str] = []
+
 MAX_LEN = 32
 
 with open(DATA_FILE) as f:
@@ -54,6 +57,7 @@ with open(DATA_FILE) as f:
         phonemes = phonemes.strip().split(",")[0]
         phonemes = re.sub(r'[/\'ˈˌ]', '', phonemes)
         text = re.sub(r'[^a-z]', '', text.strip())
+        TEXT.append(text)
         assert len(text) <= MAX_LEN, text
         text = torch.tensor([IN_ALPHABET[letter] for letter in text], dtype=torch.int)
         DATA.append((text, phonemes))
@@ -98,6 +102,7 @@ def dist(a: [str], b: [str]):
 
 
 def train_model(model):
+    plt.ion()
     optimizer = optim.Adam(filter(lambda x: x.requires_grad, model.parameters()),
                            lr=LEARNING_RATE)
     loss_snapshots = []
@@ -136,7 +141,7 @@ def train_model(model):
             loss_scalar = loss.item()
             total_loss += loss_scalar
             inner_bar.set_description("loss %.2f" % loss_scalar)
-        loss_snapshots.append(total_loss/len(DATA)*3)
+        loss_snapshots.append(total_loss / len(DATA) * 3)
         plt.clf()
         plt.plot(loss_snapshots, label="Avg loss ")
         plt.legend(loc="upper left")
@@ -150,6 +155,64 @@ def train_model(model):
         # print("Evaluation snapshots(%):", eval_snapshots_percentage)
         outer_bar.set_description("Epochs")
         outer_bar.update(1)
+        plt.ioff()
 
 
-train_model(CNN(kernel_size=3, hidden_layers=14, channels=MAX_LEN, embedding_size=MAX_LEN).to(DEVICE))
+def evaluate_and_show(model, count, batch_size):
+    embeddings = torch.empty((count, MAX_LEN))
+    with torch.no_grad():
+        data_loader = DataLoader(dataset=DATA[:count], drop_last=True,
+                                 batch_size=batch_size,
+                                 collate_fn=collate,
+                                 shuffle=False)
+        for i, (batch, _) in enumerate(data_loader):
+            out = model(batch.to(DEVICE)).cpu()
+            embeddings[i * batch_size:(i + 1) * batch_size] = out
+    tsne_show(embeddings, TEXT)
+
+
+def tsne_show(vectors, labels):
+    from sklearn.manifold import TSNE
+    embeddedX = TSNE(n_components=2).fit_transform(vectors)
+    # plt.clf()
+    fig, ax = plt.subplots()
+    sc = plt.scatter(embeddedX[:, 0], embeddedX[:, 1])
+    annot = ax.annotate("", xy=(0, 0), xytext=(20, 20), textcoords="offset points",
+                        bbox=dict(boxstyle="round", fc="w"),
+                        arrowprops=dict(arrowstyle="->"))
+    annot.set_visible(False)
+
+    def update_annot(ind):
+        pos = sc.get_offsets()[ind["ind"][0]]
+        annot.xy = pos
+        text = "{}, {}".format(" ".join(list(map(str, ind["ind"]))),
+                               " ".join([labels[n] for n in ind["ind"]]))
+        annot.set_text(text)
+
+    def hover(event):
+        vis = annot.get_visible()
+        if event.inaxes == ax:
+            cont, ind = sc.contains(event)
+            if cont:
+                update_annot(ind)
+                annot.set_visible(True)
+                fig.canvas.draw_idle()
+            else:
+                if vis:
+                    annot.set_visible(False)
+                    fig.canvas.draw_idle()
+
+    fig.canvas.mpl_connect("motion_notify_event", hover)
+
+    plt.show()
+
+
+cnn = CNN(kernel_size=3, hidden_layers=14, channels=MAX_LEN, embedding_size=MAX_LEN).to(DEVICE)
+if os.path.isfile('cnn.pth'):
+    cnn.load_state_dict(torch.load('cnn.pth'))
+else:
+    train_model(cnn)
+    torch.save(cnn.state_dict(), 'cnn.pth')
+
+cnn.eval()
+evaluate_and_show(cnn, 2048, 128)
