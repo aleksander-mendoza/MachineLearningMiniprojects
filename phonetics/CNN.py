@@ -155,7 +155,7 @@ def train_model(model):
         # print("Evaluation snapshots(%):", eval_snapshots_percentage)
         outer_bar.set_description("Epochs")
         outer_bar.update(1)
-        plt.ioff()
+    plt.ioff()
 
 
 def evaluate_and_show(model, count, batch_size):

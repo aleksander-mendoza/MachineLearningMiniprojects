@@ -11,6 +11,10 @@
 - [MNIST autoencoder](./mnist_autoencoder) - convolutional autoencoder that compresses MNIST digits 
    - [(AE) Autoencoder solution](./mnist_autoencoder/MAE.py)
    - [(VAE) Variational autoencoder solution](./mnist_autoencoder/VAE.py)
+- [Moving MNIST autoencoder](./mnist_autoencoder) - State-space model for encoding time series over latent space 
+   - [(ConvLSTM) Convolutional LSTM solution](./moving_mnist_autoencoder/ConvLSTM.py)
+   - [(Deterministic LSTM) recurrent network over latent space (with epsilon teacher forcing) solution](./moving_mnist_autoencoder/LatentLSTM.py)
+   - [(Deterministic fully conntected ) recurrent network (without LSTM or any other form of long term memory) over latent space (with epsilon teacher forcing) solution](./moving_mnist_autoencoder/LinearLatent.py)
 - [mountain car](./mountain_car_continuous) -  reinforcement learning agent that learns to drive a car uphill  
    - [(DDPG) Deep deterministic policy gradient solution](./mountain_car_continuous/MC.py)
    - [(PPO) Proximal policy optimisation solution](./mountain_car_continuous/PPO.py) (copied from https://github.com/nikhilbarhate99/PPO-PyTorch)
@@ -19,6 +23,8 @@
    - [(Dreamer) reinforcement learning with latent imagination](./bipedal_walker/Dreamer.py) 
    - [(custom Dreamer) my own adaptation of Dreamer](./bipedal_walker/BW.py) 
    - [(GA) Genetic algorithm](./bipedal_walker/GA.py) (unfortunately the results are poor)
+- [information extraction from NDA documents](./named_entity_recognition) -  named entity recognition and information extraction tasks  
+   - [(BERT) solution based on huggingface pretrained BERT transformers](./named_entity_recognition/BERT.py)
   
         
 
