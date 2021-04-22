@@ -28,8 +28,9 @@ class RSSM(nn.Module):
         self.conv4 = nn.ConvTranspose2d(8, 4, kernel_size=5)
         self.conv5 = nn.ConvTranspose2d(4, 2, kernel_size=5)
         self.conv6 = nn.ConvTranspose2d(2, 1, kernel_size=5)
+        self.latent_criterion = nn.MSELoss()
 
-    def forward(self, x):
+    def forward(self, x, epsilon):
         """
         Parameters
         ----------
@@ -39,21 +40,25 @@ class RSSM(nn.Module):
         batch_size = x.size()[0]
 
         x = x.transpose(0, 1)  # shape (t, b, c, h, w)        #   time, batch, channel, height, width
-        lstm_hidden = self.hidden_state.repeat(batch_size, 1)
-        lstm_cell = self.cell_state.repeat(batch_size, 1)
         output = torch.empty_like(x)
+        latent = None
+        latent_loss = 0
         for time_step, frame in enumerate(x):  # frame shape    (batch, channel, height, width)
-            if epsilon < random.random():
-                frame = F.relu(self.conv1(frame), True)
-                frame = F.relu(self.conv2(frame), True)
-                frame = F.relu(self.conv3(frame), True)
-                frame = frame.view(batch_size, self.hidden_size)
-                frame = F.relu(self.lin1(frame), True)
+            frame = F.relu(self.conv1(frame), True)
+            frame = F.relu(self.conv2(frame), True)
+            frame = F.relu(self.conv3(frame), True)
+            frame = frame.view(batch_size, self.hidden_size)
+            posterior_latent = self.observation_to_latent(frame)
+            if latent is None:
+                latent = posterior_latent
             else:
-                frame = lstm_hidden
-            lstm_hidden, lstm_cell = self.recurrent(frame, (lstm_hidden, lstm_cell))
-            frame = lstm_hidden
-            frame = F.relu(self.lin2(frame), True)
+                prior_latent = self.latent_to_latent(latent)
+                latent_loss = latent_loss + self.latent_criterion(prior_latent, posterior_latent)
+                if epsilon < random.random():  # teacher forcing
+                    latent = prior_latent
+                else:
+                    latent = posterior_latent
+            frame = F.relu(self.latent_to_observation(latent), True)
             frame = frame.view(batch_size, 8, self.width - 4 * 3, self.height - 4 * 3)
             frame = F.relu(self.conv4(frame), True)
             frame = F.relu(self.conv5(frame), True)
@@ -61,7 +66,7 @@ class RSSM(nn.Module):
             # frame = torch.sigmoid(frame)
             output[time_step] = frame
         output = output.transpose(0, 1)
-        return output
+        return output, latent_loss
 
 
 MEAN = 12.6026
@@ -108,13 +113,14 @@ losses = []
 
 batch_bar = tqdm(total=data.size()[0], position=2, desc="samples")
 
+
 for epoch in tqdm(range(1024), position=1, desc="epoch"):
     total_loss = 0
     batch_bar.reset()
     for batch in loader:
         batch = batch.to(DEVICE)
-        y_hat = model(batch, 0.5)
-        loss = criterion(y_hat, batch)
+        y_hat, loss = model(batch, 0.5 if epoch < 50 else 0)
+        loss = loss + criterion(y_hat, batch)
         total_loss += loss.item()
         optim.zero_grad()
         loss.backward()
