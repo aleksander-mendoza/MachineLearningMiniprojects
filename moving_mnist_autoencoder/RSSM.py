@@ -6,8 +6,10 @@ import os.path
 import random
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
+from torch.distributions.kl import kl_divergence
 from torchvision.transforms import transforms
 from tqdm import tqdm
+from torch.distributions.normal import Normal
 
 DEVICE = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 
@@ -22,8 +24,9 @@ class RSSM(nn.Module):
         self.conv2 = nn.Conv2d(2, 4, kernel_size=5)
         self.conv3 = nn.Conv2d(4, 8, kernel_size=5)
         self.hidden_size = (self.width - 4 * 3) * (self.height - 4 * 3) * 8
-        self.observation_to_latent = nn.Linear(self.hidden_size, bottleneck)
-        self.latent_to_latent = nn.Linear(bottleneck, bottleneck)
+        self.observation_to_latent = nn.Linear(self.hidden_size, bottleneck*2)
+        self.latent_to_latent1 = nn.Linear(bottleneck, bottleneck)
+        self.latent_to_latent2 = nn.Linear(bottleneck, bottleneck * 2)
         self.latent_to_observation = nn.Linear(bottleneck, self.hidden_size)
         self.conv4 = nn.ConvTranspose2d(8, 4, kernel_size=5)
         self.conv5 = nn.ConvTranspose2d(4, 2, kernel_size=5)
@@ -49,15 +52,22 @@ class RSSM(nn.Module):
             frame = F.relu(self.conv3(frame), True)
             frame = frame.view(batch_size, self.hidden_size)
             posterior_latent = self.observation_to_latent(frame)
-            if latent is None:
-                latent = posterior_latent
+            posterior_mean, posterior_log_variance = torch.chunk(posterior_latent, 2, dim=1)
+            posterior_standard_deviation = torch.exp(0.5*posterior_log_variance)
+            eps = torch.randn_like(posterior_standard_deviation)  # `randn_like` as we need the same size
+            if time_step < 2:
+                latent = posterior_mean + (eps * posterior_standard_deviation)  # sampling
             else:
-                prior_latent = self.latent_to_latent(latent)
-                latent_loss = latent_loss + self.latent_criterion(prior_latent, posterior_latent)
+                prior_latent = self.latent_to_latent1(latent)
+                prior_latent = self.latent_to_latent2(prior_latent)
+                prior_mean, prior_log_variance = torch.chunk(prior_latent, 2, dim=1)
+                prior_standard_deviation = torch.exp(0.5 * prior_log_variance)
+                kld = kl_divergence(Normal(posterior_mean, posterior_standard_deviation), Normal(prior_mean, prior_standard_deviation))
+                latent_loss = latent_loss + kld.sum()
                 if epsilon < random.random():  # teacher forcing
-                    latent = prior_latent
+                    latent = prior_mean + (eps * prior_standard_deviation)  # sampling
                 else:
-                    latent = posterior_latent
+                    latent = posterior_mean + (eps * posterior_standard_deviation)  # sampling
             frame = F.relu(self.latent_to_observation(latent), True)
             frame = frame.view(batch_size, 8, self.width - 4 * 3, self.height - 4 * 3)
             frame = F.relu(self.conv4(frame), True)
@@ -119,8 +129,8 @@ for epoch in tqdm(range(1024), position=1, desc="epoch"):
     batch_bar.reset()
     for batch in loader:
         batch = batch.to(DEVICE)
-        y_hat, loss = model(batch, 0.5 if epoch < 50 else 0)
-        loss = loss + criterion(y_hat, batch)
+        y_hat, loss = model(batch, 0.5 if epoch < 100 else 0)
+        loss = 0.005*loss + criterion(y_hat, batch)
         total_loss += loss.item()
         optim.zero_grad()
         loss.backward()
