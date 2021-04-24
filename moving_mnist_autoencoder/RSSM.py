@@ -13,6 +13,8 @@ from torch.distributions.normal import Normal
 
 DEVICE = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 
+OBSERVED_STEPS = 5
+PREDICTED_STEPS = 5
 
 class RSSM(nn.Module):
 
@@ -23,15 +25,17 @@ class RSSM(nn.Module):
         self.conv1 = nn.Conv2d(1, 2, kernel_size=5)
         self.conv2 = nn.Conv2d(2, 4, kernel_size=5)
         self.conv3 = nn.Conv2d(4, 8, kernel_size=5)
+        self.initial_latent = torch.nn.Parameter(torch.randn(1, bottleneck, device=DEVICE))
         self.hidden_size = (self.width - 4 * 3) * (self.height - 4 * 3) * 8
-        self.observation_to_latent = nn.Linear(self.hidden_size, bottleneck*2)
-        self.latent_to_latent1 = nn.Linear(bottleneck, bottleneck)
-        self.latent_to_latent2 = nn.Linear(bottleneck, bottleneck * 2)
+        self.observation_to_stochastic = nn.Linear(self.hidden_size, bottleneck * 2)
+        self.latent_and_stochastic_to_latent = nn.Linear(bottleneck*2, bottleneck)
+        self.latent_to_stochastic = nn.Linear(bottleneck, bottleneck * 2)
         self.latent_to_observation = nn.Linear(bottleneck, self.hidden_size)
         self.conv4 = nn.ConvTranspose2d(8, 4, kernel_size=5)
         self.conv5 = nn.ConvTranspose2d(4, 2, kernel_size=5)
         self.conv6 = nn.ConvTranspose2d(2, 1, kernel_size=5)
         self.latent_criterion = nn.MSELoss()
+        self.min_std = 0.5
 
     def forward(self, x, epsilon):
         """
@@ -44,30 +48,34 @@ class RSSM(nn.Module):
 
         x = x.transpose(0, 1)  # shape (t, b, c, h, w)        #   time, batch, channel, height, width
         output = torch.empty_like(x)
-        latent = None
+        latent = self.initial_latent.repeat(batch_size, 1)
         latent_loss = 0
         for time_step, frame in enumerate(x):  # frame shape    (batch, channel, height, width)
             frame = F.relu(self.conv1(frame), True)
             frame = F.relu(self.conv2(frame), True)
             frame = F.relu(self.conv3(frame), True)
             frame = frame.view(batch_size, self.hidden_size)
-            posterior_latent = self.observation_to_latent(frame)
+            posterior_latent = self.observation_to_stochastic(frame)
             posterior_mean, posterior_log_variance = torch.chunk(posterior_latent, 2, dim=1)
-            posterior_standard_deviation = torch.exp(0.5*posterior_log_variance)
+            posterior_standard_deviation = self.min_std + torch.exp(0.5 * posterior_log_variance)
             eps = torch.randn_like(posterior_standard_deviation)  # `randn_like` as we need the same size
-            if time_step < 2:
-                latent = posterior_mean + (eps * posterior_standard_deviation)  # sampling
+
+            prior_latent = self.latent_to_stochastic(latent)
+            prior_mean, prior_log_variance = torch.chunk(prior_latent, 2, dim=1)
+            prior_standard_deviation = self.min_std + torch.exp(0.5 * prior_log_variance)
+
+            kld = kl_divergence(Normal(posterior_mean, posterior_standard_deviation),
+                                Normal(prior_mean, prior_standard_deviation))
+
+            latent_loss = latent_loss + kld
+
+            if time_step >= OBSERVED_STEPS and epsilon < random.random():  # teacher forcing
+                stochastic = prior_mean + (eps * prior_standard_deviation)  # sampling
             else:
-                prior_latent = self.latent_to_latent1(latent)
-                prior_latent = self.latent_to_latent2(prior_latent)
-                prior_mean, prior_log_variance = torch.chunk(prior_latent, 2, dim=1)
-                prior_standard_deviation = torch.exp(0.5 * prior_log_variance)
-                kld = kl_divergence(Normal(posterior_mean, posterior_standard_deviation), Normal(prior_mean, prior_standard_deviation))
-                latent_loss = latent_loss + kld.sum()
-                if epsilon < random.random():  # teacher forcing
-                    latent = prior_mean + (eps * prior_standard_deviation)  # sampling
-                else:
-                    latent = posterior_mean + (eps * posterior_standard_deviation)  # sampling
+                stochastic = posterior_mean + (eps * posterior_standard_deviation)  # sampling
+
+            latent = self.latent_and_stochastic_to_latent(torch.cat([latent, stochastic], dim=1))
+
             frame = F.relu(self.latent_to_observation(latent), True)
             frame = frame.view(batch_size, 8, self.width - 4 * 3, self.height - 4 * 3)
             frame = F.relu(self.conv4(frame), True)
@@ -76,7 +84,7 @@ class RSSM(nn.Module):
             # frame = torch.sigmoid(frame)
             output[time_step] = frame
         output = output.transpose(0, 1)
-        return output, latent_loss
+        return output, latent_loss.mean()
 
 
 MEAN = 12.6026
@@ -100,7 +108,7 @@ if not os.path.isfile(FILE_NORMALIZED):
     MEAN = data.mean()
     STD = data.std()
     print("mean=", MEAN, "std=", STD)
-    data = (data-MEAN)/STD
+    data = (data - MEAN) / STD
     data = data.unsqueeze(2)  # number of channels is 1
     print("Saving")
     torch.save(data, FILE_NORMALIZED)
@@ -112,7 +120,7 @@ print("Running")
 
 BATCH_SIZE = 4
 
-loader = DataLoader(dataset=data, batch_size=BATCH_SIZE, shuffle=True)
+loader = DataLoader(dataset=data[:, 0:OBSERVED_STEPS + PREDICTED_STEPS], batch_size=BATCH_SIZE, shuffle=True)
 
 model = RSSM(64, 64, 64).to(DEVICE)
 
@@ -123,14 +131,13 @@ losses = []
 
 batch_bar = tqdm(total=data.size()[0], position=2, desc="samples")
 
-
-for epoch in tqdm(range(1024), position=1, desc="epoch"):
+for epoch in tqdm(range(1024*1024), position=1, desc="epoch"):
     total_loss = 0
     batch_bar.reset()
     for batch in loader:
         batch = batch.to(DEVICE)
-        y_hat, loss = model(batch, 0.5 if epoch < 100 else 0)
-        loss = 0.005*loss + criterion(y_hat, batch)
+        y_hat, loss = model(batch, 0 if epoch < 100 else 1)
+        loss = loss + criterion(y_hat, batch)
         total_loss += loss.item()
         optim.zero_grad()
         loss.backward()

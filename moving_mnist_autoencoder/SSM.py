@@ -13,6 +13,9 @@ from torch.distributions.normal import Normal
 
 DEVICE = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 
+OBSERVED_STEPS = 5
+PREDICTED_STEPS = 15
+
 
 class RSSM(nn.Module):
 
@@ -24,7 +27,7 @@ class RSSM(nn.Module):
         self.conv2 = nn.Conv2d(2, 4, kernel_size=5)
         self.conv3 = nn.Conv2d(4, 8, kernel_size=5)
         self.hidden_size = (self.width - 4 * 3) * (self.height - 4 * 3) * 8
-        self.observation_to_latent = nn.Linear(self.hidden_size, bottleneck*2)
+        self.observation_to_latent = nn.Linear(self.hidden_size, bottleneck * 2)
         self.latent_to_latent1 = nn.Linear(bottleneck, bottleneck)
         self.latent_to_latent2 = nn.Linear(bottleneck, bottleneck * 2)
         self.latent_to_observation = nn.Linear(bottleneck, self.hidden_size)
@@ -32,6 +35,11 @@ class RSSM(nn.Module):
         self.conv5 = nn.ConvTranspose2d(4, 2, kernel_size=5)
         self.conv6 = nn.ConvTranspose2d(2, 1, kernel_size=5)
         self.latent_criterion = nn.MSELoss()
+        self.min_std = 0.5  # Interestingly, if this value is too low,
+        # then the network will just learn to set standard deviation to
+        # zero everywhere and variational autoencoder will be reduced to
+        # just a deterministic autoencoder. However, if this is too high,
+        # then predicting any future states becomes impossible
 
     def forward(self, x, epsilon):
         """
@@ -53,17 +61,18 @@ class RSSM(nn.Module):
             frame = frame.view(batch_size, self.hidden_size)
             posterior_latent = self.observation_to_latent(frame)
             posterior_mean, posterior_log_variance = torch.chunk(posterior_latent, 2, dim=1)
-            posterior_standard_deviation = torch.exp(0.5*posterior_log_variance)
+            posterior_standard_deviation = self.min_std + torch.exp(0.5 * posterior_log_variance)
             eps = torch.randn_like(posterior_standard_deviation)  # `randn_like` as we need the same size
-            if time_step < 2:
+            if time_step < OBSERVED_STEPS:
                 latent = posterior_mean + (eps * posterior_standard_deviation)  # sampling
             else:
                 prior_latent = self.latent_to_latent1(latent)
                 prior_latent = self.latent_to_latent2(prior_latent)
                 prior_mean, prior_log_variance = torch.chunk(prior_latent, 2, dim=1)
-                prior_standard_deviation = torch.exp(0.5 * prior_log_variance)
-                kld = kl_divergence(Normal(posterior_mean, posterior_standard_deviation), Normal(prior_mean, prior_standard_deviation))
-                latent_loss = latent_loss + kld.sum()
+                prior_standard_deviation = self.min_std + torch.exp(0.5 * prior_log_variance)
+                kld = kl_divergence(Normal(posterior_mean, posterior_standard_deviation),
+                                    Normal(prior_mean, prior_standard_deviation))
+                latent_loss = latent_loss + kld
                 if epsilon < random.random():  # teacher forcing
                     latent = prior_mean + (eps * prior_standard_deviation)  # sampling
                 else:
@@ -76,7 +85,9 @@ class RSSM(nn.Module):
             # frame = torch.sigmoid(frame)
             output[time_step] = frame
         output = output.transpose(0, 1)
-        return output, latent_loss
+        return output, latent_loss.mean()  # !! Taking the mean of KLD is crucial for learning !!
+        # Without the mean, KLD would be so large that it would
+        # disproportionally skew the loss function. I spent way too much time debugging this
 
 
 MEAN = 12.6026
@@ -100,7 +111,7 @@ if not os.path.isfile(FILE_NORMALIZED):
     MEAN = data.mean()
     STD = data.std()
     print("mean=", MEAN, "std=", STD)
-    data = (data-MEAN)/STD
+    data = (data - MEAN) / STD
     data = data.unsqueeze(2)  # number of channels is 1
     print("Saving")
     torch.save(data, FILE_NORMALIZED)
@@ -112,7 +123,7 @@ print("Running")
 
 BATCH_SIZE = 4
 
-loader = DataLoader(dataset=data, batch_size=BATCH_SIZE, shuffle=True)
+loader = DataLoader(dataset=data[:, 0:OBSERVED_STEPS + PREDICTED_STEPS], batch_size=BATCH_SIZE, shuffle=True)
 
 model = RSSM(64, 64, 64).to(DEVICE)
 
@@ -123,14 +134,13 @@ losses = []
 
 batch_bar = tqdm(total=data.size()[0], position=2, desc="samples")
 
-
 for epoch in tqdm(range(1024), position=1, desc="epoch"):
     total_loss = 0
     batch_bar.reset()
     for batch in loader:
         batch = batch.to(DEVICE)
         y_hat, loss = model(batch, 0.5 if epoch < 100 else 0)
-        loss = 0.005*loss + criterion(y_hat, batch)
+        loss = loss + criterion(y_hat, batch)
         total_loss += loss.item()
         optim.zero_grad()
         loss.backward()
