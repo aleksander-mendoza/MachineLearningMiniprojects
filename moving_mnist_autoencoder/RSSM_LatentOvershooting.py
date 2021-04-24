@@ -13,8 +13,8 @@ from torch.distributions.normal import Normal
 
 DEVICE = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 
-OBSERVED_STEPS = 5
-PREDICTED_STEPS = 5
+OBSERVED_STEPS = 3
+PREDICTED_STEPS = 2
 
 class RSSM(nn.Module):
 
@@ -46,10 +46,12 @@ class RSSM(nn.Module):
         """
         batch_size = x.size()[0]
         time_steps = x.size()[1]
+
         x = x.transpose(0, 1)  # shape (t, b, c, h, w)        #   time, batch, channel, height, width
         output = torch.empty_like(x)
         latent = self.initial_latent.repeat(batch_size, 1)
         latent_loss = 0
+        # hide_obs = epsilon < random.random()
         for time_step, frame in enumerate(x):  # frame shape    (batch, channel, height, width)
             frame = F.relu(self.conv1(frame), True)
             frame = F.relu(self.conv2(frame), True)
@@ -69,10 +71,10 @@ class RSSM(nn.Module):
 
             latent_loss = latent_loss + kld
 
-            if time_step >= OBSERVED_STEPS and epsilon < random.random():  # teacher forcing
-                stochastic = prior_mean + (eps * prior_standard_deviation)  # sampling
-            else:
+            if time_step < OBSERVED_STEPS:  #or not hide_obs:  # teacher forcing
                 stochastic = posterior_mean + (eps * posterior_standard_deviation)  # sampling
+            else:
+                stochastic = prior_mean + (eps * prior_standard_deviation)  # sampling
 
             latent = self.latent_and_stochastic_to_latent(torch.cat([latent, stochastic], dim=1))
 
@@ -84,9 +86,7 @@ class RSSM(nn.Module):
             # frame = torch.sigmoid(frame)
             output[time_step] = frame
         output = output.transpose(0, 1)
-        return output, latent_loss.mean() / time_steps  # <-- uncomment me to take mean across time steps!
-        # Learning goes much much faster when mean is calculated not only across batches and latent units but also
-        # across time steps.
+        return output, latent_loss.mean()/time_steps
 
 
 MEAN = 12.6026
@@ -133,14 +133,12 @@ losses = []
 
 batch_bar = tqdm(total=data.size()[0], position=2, desc="samples")
 
-TEACHER_FORCING_PERIOD = 0
-
 for epoch in tqdm(range(1024*1024), position=1, desc="epoch"):
     total_loss = 0
     batch_bar.reset()
     for batch in loader:
         batch = batch.to(DEVICE)
-        y_hat, loss = model(batch, 0.5 if epoch < TEACHER_FORCING_PERIOD else 1)
+        y_hat, loss = model(batch, 0 if epoch < 100 else 1)
         loss = loss + criterion(y_hat, batch)
         total_loss += loss.item()
         optim.zero_grad()

@@ -88,6 +88,10 @@ class RSSM(nn.Module):
         return output, latent_loss.mean()  # !! Taking the mean of KLD is crucial for learning !!
         # Without the mean, KLD would be so large that it would
         # disproportionally skew the loss function. I spent way too much time debugging this
+        #
+        # Note added later: dividing by number of time steps improves performance even more !!
+
+
 
 
 MEAN = 12.6026
