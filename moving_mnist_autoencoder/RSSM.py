@@ -84,7 +84,7 @@ class RSSM(nn.Module):
             # frame = torch.sigmoid(frame)
             output[time_step] = frame
         output = output.transpose(0, 1)
-        return output, latent_loss.mean() / time_steps  # <-- uncomment me to take mean across time steps!
+        return output, latent_loss.mean()  # / time_steps  # <-- uncomment me to take mean across time steps!
         # Learning goes much much faster when mean is calculated not only across batches and latent units but also
         # across time steps.
 
@@ -133,7 +133,13 @@ losses = []
 
 batch_bar = tqdm(total=data.size()[0], position=2, desc="samples")
 
-TEACHER_FORCING_PERIOD = 0
+TEACHER_FORCING_PERIOD = 100  # Normally I set it to 100 or 50
+# in many of my tests. You can sometimes even see a sharp spike around step 50
+# on many graphs. It's cased by this factor.
+# Initially I thought that it would speed-up learning but later
+# I discovered that it's not really necessary. The slow learning was a problem because I
+# didn't take the mean of KLD. However, taking the mean across batches, latent units and time steps
+# allowed for swift convergence
 
 for epoch in tqdm(range(1024*1024), position=1, desc="epoch"):
     total_loss = 0
