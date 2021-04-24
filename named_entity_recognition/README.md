@@ -1,6 +1,7 @@
-Dataset from
+Dataset from https://github.com/applicaai/kleister-nda
 
-https://github.com/applicaai/kleister-nda
+Python script generating results is in [BERT.py](./BERT.py)
+
 
 
 dev-0 set
