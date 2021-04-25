@@ -79,7 +79,6 @@ class Autoencoder(nn.Module):
 # Defining Parameters
 
 EPOCHS = 1000
-batch_size = 128
 model = Autoencoder(28, 28, 32).to(DEVICE)
 distance = nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), weight_decay=1e-5)

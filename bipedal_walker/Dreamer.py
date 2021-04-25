@@ -451,6 +451,8 @@ class TanhBijector(torch.distributions.Transform):
     def __init__(self):
         super().__init__()
         self.bijective = True
+        self.domain = torch.distributions.constraints.Constraint()
+        self.codomain = torch.distributions.constraints.Constraint()
 
     @property
     def sign(self): return 1.
@@ -593,74 +595,6 @@ def _images_to_observation(images, bit_depth):
     preprocess_observation_(images, bit_depth)  # Quantise, centre and dequantise inplace
     return images.unsqueeze(dim=0)  # Add batch dimension
 
-
-class ControlSuiteEnv():
-    def __init__(self, env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
-        from dm_control import suite
-        from dm_control.suite.wrappers import pixels
-        domain, task = env.split('-')
-        self.symbolic = symbolic
-        self._env = suite.load(domain_name=domain, task_name=task, task_kwargs={'random': seed})
-        if not symbolic:
-            self._env = pixels.Wrapper(self._env)
-        self.max_episode_length = max_episode_length
-        self.action_repeat = action_repeat
-        if action_repeat != CONTROL_SUITE_ACTION_REPEATS[domain]:
-            print('Using action repeat %d; recommended action repeat for domain is %d' % (
-                action_repeat, CONTROL_SUITE_ACTION_REPEATS[domain]))
-        self.bit_depth = bit_depth
-
-    def reset(self):
-        self.t = 0  # Reset internal timer
-        state = self._env.reset()
-        if self.symbolic:
-            return torch.tensor(np.concatenate(
-                [np.asarray([obs]) if isinstance(obs, float) else obs for obs in state.observation.values()], axis=0),
-                dtype=torch.float32).unsqueeze(dim=0)
-        else:
-            return _images_to_observation(self._env.physics.render(camera_id=0), self.bit_depth)
-
-    def step(self, action):
-        action = action.detach().numpy()
-        reward = 0
-        for k in range(self.action_repeat):
-            state = self._env.step(action)
-            reward += state.reward
-            self.t += 1  # Increment internal timer
-            done = state.last() or self.t == self.max_episode_length
-            if done:
-                break
-        if self.symbolic:
-            observation = torch.tensor(np.concatenate(
-                [np.asarray([obs]) if isinstance(obs, float) else obs for obs in state.observation.values()], axis=0),
-                dtype=torch.float32).unsqueeze(dim=0)
-        else:
-            observation = _images_to_observation(self._env.physics.render(camera_id=0), self.bit_depth)
-        return observation, reward, done
-
-    def render(self):
-        cv2.imshow('screen', self._env.physics.render(camera_id=0)[:, :, ::-1])
-        cv2.waitKey(1)
-
-    def close(self):
-        cv2.destroyAllWindows()
-        self._env.close()
-
-    @property
-    def observation_size(self):
-        return sum([(1 if len(obs.shape) == 0 else obs.shape[0]) for obs in
-                    self._env.observation_spec().values()]) if self.symbolic else (3, 64, 64)
-
-    @property
-    def action_size(self):
-        return self._env.action_spec().shape[0]
-
-    # Sample an action randomly from a uniform distribution over all valid actions
-    def sample_random_action(self):
-        spec = self._env.action_spec()
-        return torch.from_numpy(np.random.uniform(spec.minimum, spec.maximum, spec.shape))
-
-
 class GymEnv():
     def __init__(self, env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
         import gym
@@ -715,10 +649,7 @@ class GymEnv():
 
 
 def Env(env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
-    if env in GYM_ENVS:
-        return GymEnv(env, symbolic, seed, max_episode_length, action_repeat, bit_depth)
-    elif env in CONTROL_SUITE_ENVS:
-        return ControlSuiteEnv(env, symbolic, seed, max_episode_length, action_repeat, bit_depth)
+    return GymEnv(env, symbolic, seed, max_episode_length, action_repeat, bit_depth)
 
 
 # Wrapper for batching environments together
@@ -750,7 +681,8 @@ class EnvBatcher():
         return observations, rewards, dones
 
     def close(self):
-        [env.close() for env in self.envs]
+        for env in self.envs:
+            env.close()
 
 
 parser = argparse.ArgumentParser(description='PlaNet or Dreamer')
@@ -758,11 +690,11 @@ parser.add_argument('--algo', type=str, default='dreamer', help='planet or dream
 parser.add_argument('--id', type=str, default='default', help='Experiment ID')
 parser.add_argument('--seed', type=int, default=1, metavar='S', help='Random seed')
 parser.add_argument('--disable-cuda', action='store_true', help='Disable CUDA')
-parser.add_argument('--env', type=str, default='Pendulum-v0', choices=GYM_ENVS + CONTROL_SUITE_ENVS,
+parser.add_argument('--env', type=str, default='BipedalWalker-v3', choices=GYM_ENVS + CONTROL_SUITE_ENVS,
                     help='Gym/Control Suite environment')
 parser.add_argument('--symbolic-env', action='store_true', help='Symbolic features')
 parser.add_argument('--max-episode-length', type=int, default=1000, metavar='T', help='Max episode length')
-parser.add_argument('--experience-size', type=int, default=1000000, metavar='D',
+parser.add_argument('--experience-size', type=int, default=10000, metavar='D',
                     help='Experience replay size')  # Original implementation has an unlimited buffer size, but 1 million is the max experience collected anyway
 parser.add_argument('--cnn-activation-function', type=str, default='relu', choices=dir(F),
                     help='Model activation function for a convolution layer')
@@ -904,8 +836,7 @@ def update_belief_and_act(args, env, planner, transition_model, encoder, belief,
     # Infer belief over current state q(s_t|o≤t,a<t) from the history
     # print("action size: ",action.size()) torch.Size([1, 6])
     belief, _, _, _, posterior_state, _, _ = transition_model(posterior_state, action.unsqueeze(dim=0), belief,
-                                                              encoder(observation).unsqueeze(
-                                                                  dim=0))  # Action and observation need extra time dimension
+                                                              encoder(observation).unsqueeze(dim=0))  # Action and observation need extra time dimension
     belief, posterior_state = belief.squeeze(dim=0), posterior_state.squeeze(
         dim=0)  # Remove time dimension from belief/state
     if args.algo == "dreamer":
@@ -931,10 +862,9 @@ if args.test:
         total_reward = 0
         for _ in tqdm(range(args.test_episodes)):
             observation = env.reset()
-            belief, posterior_state, action = torch.zeros(1, args.belief_size, device=args.device), torch.zeros(1,
-                                                                                                                args.state_size,
-                                                                                                                device=args.device), torch.zeros(
-                1, env.action_size, device=args.device)
+            belief = torch.zeros(1, args.belief_size, device=args.device)
+            posterior_state = torch.zeros(1, args.state_size, device=args.device)
+            action = torch.zeros(1, env.action_size, device=args.device)
             pbar = tqdm(range(args.max_episode_length // args.action_repeat))
             for t in pbar:
                 belief, posterior_state, action, observation, reward, done = update_belief_and_act(args, env, planner,
@@ -942,8 +872,7 @@ if args.test:
                                                                                                    encoder, belief,
                                                                                                    posterior_state,
                                                                                                    action,
-                                                                                                   observation.to(
-                                                                                                       device=args.device))
+                                                                                                   observation.to(device=args.device))
                 total_reward += reward
                 if args.render:
                     env.render()
@@ -979,8 +908,7 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
                 dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
         else:
             observation_loss = F.mse_loss(bottle(observation_model, (beliefs, posterior_states)), observations[1:],
-                                          reduction='none').sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(
-                dim=(0, 1))
+                                          reduction='none').sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
         if args.worldmodel_LogProbLoss:
             reward_dist = Normal(bottle(reward_model, (beliefs, posterior_states)), 1)
             reward_loss = -reward_dist.log_prob(rewards[:-1]).mean(dim=(0, 1))
@@ -989,8 +917,7 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
                                      reduction='none').mean(dim=(0, 1))
         # transition loss
         div = kl_divergence(Normal(posterior_means, posterior_std_devs), Normal(prior_means, prior_std_devs)).sum(dim=2)
-        kl_loss = torch.max(div, free_nats).mean(dim=(
-            0, 1))  # Note that normalisation by overshooting distance and weighting by overshooting distance cancel out
+        kl_loss = torch.max(div, free_nats).mean(dim=(0, 1))  # Note that normalisation by overshooting distance and weighting by overshooting distance cancel out
         if args.global_kl_beta != 0:
             kl_loss += args.global_kl_beta * kl_divergence(Normal(posterior_means, posterior_std_devs),
                                                            global_prior).sum(dim=2).mean(dim=(0, 1))

@@ -88,7 +88,6 @@ class VariationalAutoencoder(nn.Module):
 # Defining Parameters
 
 EPOCHS = 1000
-batch_size = 128
 model = VariationalAutoencoder(28, 28, 4).to(DEVICE)
 distance = nn.BCELoss(reduction="sum")
 optimizer = torch.optim.Adam(model.parameters())
