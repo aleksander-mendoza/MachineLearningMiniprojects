@@ -1,129 +1,154 @@
-# With help from
-# https://pytorch.org/tutorials/beginner/dcgan_faces_tutorial.html
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision as tv
+import torch.optim as optim
+from torchvision import datasets, transforms
 from torch.autograd import Variable
-from torch.utils.data import DataLoader
-from torchvision.transforms import transforms
-from tqdm import tqdm
+import torchvision as tv
 from matplotlib import pyplot as plt
 
-# If you get 503 while downloading MNIST then download it manually
-# wget www.di.ens.fr/~lelarge/MNIST.tar.gz
-# tar -zxvf MNIST.tar.gz
-BATCH_SIZE = 32
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-DEVICE = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
+bs = 1024*2
 
-transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
-trainset = tv.datasets.MNIST(root='.', train=True, download=True, transform=transform)
-dataloader = DataLoader(trainset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
-
-
-def imshow(inp):
-    inp = inp.cpu().detach().numpy()
-    mean = 0.1307
-    std = 0.3081
-    inp = ((mean * inp) + std)
-    plt.clf()
-    plt.imshow(inp, cmap='gray')
-    plt.pause(interval=0.01)
-
-
-def bimshow(batch):
-    with torch.no_grad():
-        output = model(batch.to(DEVICE)).cpu()
-        imshow(torch.cat((batch.view(-1, 28), output.view(-1, 28)), 1))
-
-
-width = 28
-height = 28
-latent_width = 1
-latent_height = 1
-latent_channels = 64
-generator_hidden_channels = 1
-img_channels = 1
-
+# # MNIST Dataset
+# transform = transforms.Compose([
+#     transforms.ToTensor(),
+#     transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))])
+#
+# train_dataset = datasets.MNIST(root='./mnist_data/', train=True, transform=transform, download=True)
+# test_dataset = datasets.MNIST(root='./mnist_data/', train=False, transform=transform, download=False)
+#
+# # Data Loader (Input Pipeline)
+# train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=bs, shuffle=True)
+# test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=bs, shuffle=False)
+train_dataset = tv.datasets.MNIST(root='.', train=True, download=True) #, transform=transform)
+with torch.no_grad():
+    DATA = train_dataset.data[0:1024*64*2].float()
+    mu = DATA.mean()  # 0.1307
+    std = DATA.std()  #0.3081
+    DATA = (DATA - mu) / std
+dataloader = torch.utils.data.DataLoader(DATA, batch_size=bs, shuffle=True, drop_last=True)
 
 class Generator(nn.Module):
-
-    def __init__(self):
+    def __init__(self, g_input_dim, g_output_dim):
         super(Generator, self).__init__()
-        #
-        self.conv1 = nn.ConvTranspose2d(latent_channels, generator_hidden_channels * 8, kernel_size=4)
-        self.conv2 = nn.ConvTranspose2d(generator_hidden_channels * 8, generator_hidden_channels * 8, kernel_size=5)
-        self.conv3 = nn.ConvTranspose2d(generator_hidden_channels * 8, generator_hidden_channels * 8, kernel_size=5)
-        self.conv4 = nn.ConvTranspose2d(generator_hidden_channels * 8, generator_hidden_channels * 4, kernel_size=5)
-        self.conv5 = nn.ConvTranspose2d(generator_hidden_channels * 4, generator_hidden_channels * 2, kernel_size=5)
-        self.conv6 = nn.ConvTranspose2d(generator_hidden_channels * 2, generator_hidden_channels, kernel_size=5)
-        self.conv7 = nn.ConvTranspose2d(generator_hidden_channels, img_channels, kernel_size=5)
-        #
+        self.fc1 = nn.Linear(g_input_dim, 256)
+        self.fc2 = nn.Linear(self.fc1.out_features, self.fc1.out_features * 2)
+        self.fc3 = nn.Linear(self.fc2.out_features, self.fc2.out_features * 2)
+        self.fc4 = nn.Linear(self.fc3.out_features, g_output_dim)
 
+    # forward method
     def forward(self, x):
-        x = F.relu(self.conv1(x), True)
-        x = F.relu(self.conv2(x), True)
-        x = F.relu(self.conv3(x), True)
-        x = F.relu(self.conv4(x), True)
-        x = F.relu(self.conv5(x), True)
-        x = F.relu(self.conv6(x), True)
-        x = F.relu(self.conv7(x), True)
-        return x
+        x = F.leaky_relu(self.fc1(x), 0.2)
+        x = F.leaky_relu(self.fc2(x), 0.2)
+        x = F.leaky_relu(self.fc3(x), 0.2)
+        return torch.tanh(self.fc4(x))
 
 
 class Discriminator(nn.Module):
-
-    def __init__(self):
+    def __init__(self, d_input_dim):
         super(Discriminator, self).__init__()
-        self.conv1 = nn.Conv2d(1, 2, kernel_size=5)
-        self.conv2 = nn.Conv2d(2, 4, kernel_size=5)
-        self.conv3 = nn.Conv2d(4, 8, kernel_size=5)
+        self.fc1 = nn.Linear(d_input_dim, 1024)
+        self.fc2 = nn.Linear(self.fc1.out_features, self.fc1.out_features // 2)
+        self.fc3 = nn.Linear(self.fc2.out_features, self.fc2.out_features // 2)
+        self.fc4 = nn.Linear(self.fc3.out_features, 1)
 
+    # forward method
     def forward(self, x):
-        x = self.conv1(x)
-        x = F.relu(x, True)
-        x = self.conv2(x)
-        x = F.relu(x, True)
-        x = self.conv3(x)
-        x = F.relu(x, True)
-        # x = torch.sigmoid(x)
-        return x
+        x = F.leaky_relu(self.fc1(x), 0.2)
+        x = F.dropout(x, 0.3)
+        x = F.leaky_relu(self.fc2(x), 0.2)
+        x = F.dropout(x, 0.3)
+        x = F.leaky_relu(self.fc3(x), 0.2)
+        x = F.dropout(x, 0.3)
+        return torch.sigmoid(self.fc4(x))
 
 
-# Defining Parameters
+z_dim = 100
+mnist_dim = train_dataset.train_data.size(1) * train_dataset.train_data.size(2)
 
-EPOCHS = 1000
-G = Generator().to(DEVICE)
-D = Discriminator().to(DEVICE)
-distance = nn.MSELoss()
-optimizerG = torch.optim.Adam(G.parameters())
-optimizerD = torch.optim.Adam(D.parameters())
-outer_bar = tqdm(total=EPOCHS, position=0)
-inner_bar = tqdm(total=len(trainset), position=1)
-outer_bar.set_description("Epochs")
-for epoch in range(EPOCHS):
-    inner_bar.reset()
-    for data in dataloader:
-        real_img, _ = data
-        real_img = real_img.to(DEVICE)
-        loss_real = - torch.log(D(real_img))
-        loss_real.backward()
-        optimizerD.step()
+G = Generator(g_input_dim=z_dim, g_output_dim=mnist_dim).to(device)
+D = Discriminator(mnist_dim).to(device)
 
-        mean_loss_real = loss_real.mean().item()
+criterion = nn.BCELoss()
 
-        latent = torch.rand(BATCH_SIZE, latent_channels, latent_width, latent_height, device=DEVICE)
-        fake_img = G(latent)
-        loss_fake = torch.log(1 - D(fake_img.detach()))
+# optimizer
+lr = 0.0002
+G_optimizer = optim.Adam(G.parameters(), lr=lr)
+D_optimizer = optim.Adam(D.parameters(), lr=lr)
 
-        loss = distance(output, img)
-        optimizerG.zero_grad()
-        loss.backward()
-        optimizerG.step()
 
-        inner_bar.update(BATCH_SIZE)
-        inner_bar.set_description("Avg loss %.2f" % (loss.item() / BATCH_SIZE))
-    outer_bar.update(1)
-    bimshow(next(iter(dataloader))[0])
+def D_train(x):
+    # =======================Train the discriminator=======================#
+    D.zero_grad()
+
+    # train discriminator on real
+    x_real, y_real = x.view(bs, mnist_dim), torch.ones(bs, 1)
+    x_real, y_real = Variable(x_real.to(device)), Variable(y_real.to(device))
+
+    D_output = D(x_real)
+    D_real_loss = criterion(D_output, y_real)
+    D_real_score = D_output
+
+    # train discriminator on facke
+    z = Variable(torch.randn(bs, z_dim).to(device))
+    x_fake, y_fake = G(z), Variable(torch.zeros(bs, 1).to(device))
+
+    D_output = D(x_fake)
+    D_fake_loss = criterion(D_output, y_fake)
+    D_fake_score = D_output
+
+    # gradient backprop & optimize ONLY D's parameters
+    D_loss = D_real_loss + D_fake_loss
+    D_loss.backward()
+    D_optimizer.step()
+
+    return D_loss.data.item()
+
+
+def G_train(x):
+    # =======================Train the generator=======================#
+    G.zero_grad()
+
+    z = Variable(torch.randn(bs, z_dim).to(device))
+    y = Variable(torch.ones(bs, 1).to(device))
+
+    G_output = G(z)
+    D_output = D(G_output)
+    G_loss = criterion(D_output, y)
+
+    # gradient backprop & optimize ONLY G's parameters
+    G_loss.backward()
+    G_optimizer.step()
+
+    return G_loss.data.item()
+
+
+n_epoch = 2000
+D_losses, G_losses = [], []
+for epoch in range(1, n_epoch + 1):
+    D_loss_total = 0
+    G_loss_total = 1
+    for batch_idx, x in enumerate(dataloader):
+        D_loss_total += D_train(x)
+        G_loss_total += G_train(x)
+    D_losses.append(D_loss_total)
+    G_losses.append(G_loss_total)
+    with torch.no_grad():
+        test_z = Variable(torch.randn(1, z_dim).to(device))
+        generated = G(test_z).cpu()
+        generated = generated.view(28, 28)
+        # fake_img = fake_img.view(-1, 28)
+        generated = generated.detach().numpy()
+        generated = ((std * generated) + mu)
+        plt.clf()
+        plt.subplot(1, 2, 1)
+        plt.plot(G_losses, label="generator loss")
+        plt.plot(D_losses, label="discriminator loss")
+        plt.legend(loc="upper left")
+        plt.subplot(1, 2, 2)
+        plt.imshow(generated, cmap='gray')
+        plt.pause(interval=0.01)
+    # print('[%d/%d]: loss_d: %.3f, loss_g: %.3f' % (
+    #     (epoch), n_epoch, torch.mean(torch.FloatTensor(D_losses)), torch.mean(torch.FloatTensor(G_losses))))
