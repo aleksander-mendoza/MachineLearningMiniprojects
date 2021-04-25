@@ -6,6 +6,18 @@ import os
 from collections import deque
 import select
 import sys
+from fake_headers import Headers
+
+header = Headers(
+        headers=True  # generate misc headers
+    )
+
+# from random_user_agent.user_agent import UserAgent
+# from random_user_agent.params import SoftwareName, OperatingSystem, HardwareType
+# user_agent_rotator = UserAgent(software_names=[e.value for e in SoftwareName],
+#                                operating_systems=[e.value for e in OperatingSystem],
+#                                hardware_type=[e.value for e in HardwareType], limit=500)
+
 
 AMAZON_URL = "https://www.amazon.co.jp/"
 
@@ -43,12 +55,12 @@ MAC = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML
 UBUNTU = "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:86.0) Gecko/20100101 Firefox/86.0"
 
 
+
 def get_url(url):
     print(url)
-    resp = requests.get(url, headers={
-        'user-agent': UBUNTU,
-        # 'sec-ch-ua': '"Google Chrome";v="89", "Chromium";v="89", ";Not A Brand";v="99"'
-    })
+    h = header.generate()
+    h['Accept-Language'] = 'jp-JP;q=0.5,jp;q=0.3'
+    resp = requests.get(url, headers=h)
     return BeautifulSoup(resp.content, 'html.parser')
 
 
