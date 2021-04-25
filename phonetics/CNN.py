@@ -209,7 +209,7 @@ def tsne_show(vectors, labels):
 
 cnn = CNN(kernel_size=3, hidden_layers=14, channels=MAX_LEN, embedding_size=MAX_LEN).to(DEVICE)
 if os.path.isfile('cnn.pth'):
-    cnn.load_state_dict(torch.load('cnn.pth'))
+    cnn.load_state_dict(torch.load('cnn.pth', map_location=torch.device('cpu')))
 else:
     train_model(cnn)
     torch.save(cnn.state_dict(), 'cnn.pth')
