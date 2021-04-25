@@ -17,7 +17,6 @@ import os
 from tqdm import tqdm
 from Levenshtein import distance as levenshtein_distance
 
-
 DATA_FILE = 'en_US.txt'
 EPOCHS = 14
 TEACHER_FORCING_PROBABILITY = 0.4
@@ -158,6 +157,33 @@ def train_model(model):
     plt.ioff()
 
 
+def evaluate_monte_carlo(model, repeats):
+    with torch.no_grad():
+        i = 0
+        diff = 0
+        outer_bar.reset(total=repeats)
+        outer_bar.set_description("Epochs")
+        for _ in range(repeats):
+            data_loader = DataLoader(dataset=DATA, drop_last=True,
+                                     batch_size=2 * BATCH_SIZE,
+                                     collate_fn=collate,
+                                     shuffle=True)
+            inner_bar.reset()
+            for batch_text, batch_phonemes in data_loader:
+                positive, negative = batch_text.to(DEVICE).split(BATCH_SIZE)
+                ph_positive = batch_phonemes[0:BATCH_SIZE]
+                ph_negative = batch_phonemes[BATCH_SIZE:]
+                embedded_positive = model(positive)
+                embedded_negative = model(negative)
+                estimated_dist = torch.linalg.norm(embedded_negative - embedded_positive, dim=1)
+                actual_dist = dist(ph_negative, ph_positive)
+                diff += sum(abs(estimated_dist - actual_dist))
+                i += BATCH_SIZE
+                inner_bar.update(2 * BATCH_SIZE)
+            outer_bar.update(1)
+        print("Average estimation error " + str(diff.item() / i))
+
+
 def evaluate_and_show(model, count, batch_size):
     embeddings = torch.empty((count, MAX_LEN))
     with torch.no_grad():
@@ -215,4 +241,5 @@ else:
     torch.save(cnn.state_dict(), 'cnn.pth')
 
 cnn.eval()
-evaluate_and_show(cnn, 2048, 128)
+evaluate_monte_carlo(cnn, 10)
+# evaluate_and_show(cnn, 2048, 128)
