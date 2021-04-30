@@ -26,7 +26,8 @@
    - [(DDPG) Deep deterministic policy gradient](./bipedal_walker/DDPG.py) (unfortunately the results are somewhat underwhelming)
    - [(Dreamer) reinforcement learning with latent imagination](./bipedal_walker/Dreamer.py) 
    - [(custom Dreamer) my own adaptation of Dreamer](./bipedal_walker/BW.py) 
-   - [(GA) Genetic algorithm](./bipedal_walker/GA.py) (unfortunately the results are poor)
+   - [(GA) Genetic algorithm (with elite and no crossover)](./bipedal_walker/GA.py) (the results are poor)
+   - [(GA) Genetic algorithm (with crossover and more relaxed survivorship policy)](./bipedal_walker/GA_crossover.py)
 - [information extraction from NDA documents](./named_entity_recognition) -  named entity recognition and information extraction tasks  
    - [(BERT) solution based on huggingface pretrained BERT transformers](./named_entity_recognition/BERT.py)
   
