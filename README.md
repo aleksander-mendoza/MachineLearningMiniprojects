@@ -11,6 +11,8 @@
 - [MNIST autoencoder](./mnist_autoencoder) - convolutional autoencoder that compresses MNIST digits 
    - [(AE) Autoencoder solution](./mnist_autoencoder/MAE.py)
    - [(VAE) Variational autoencoder](./mnist_autoencoder/VAE.py)
+   - [(GAN) Generative adversarial neural network](./mnist_autoencoder/GAN.py)
+   - [(DCGAN) Deep convolutional generative adversarial neural network](./mnist_autoencoder/DCGAN.py)
 - [Moving MNIST autoencoder](./mnist_autoencoder) - State-space model for encoding time series over latent space 
    - [(ConvLSTM) Convolutional LSTM](./moving_mnist_autoencoder/ConvLSTM.py)
    - [(Deterministic LSTM) recurrent network over latent space (with epsilon teacher forcing) ](./moving_mnist_autoencoder/LSTM.py)

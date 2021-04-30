@@ -1,6 +1,6 @@
 import os
-
-os.putenv("JAVA_HOME", "/Library/Java/JavaVirtualMachines/jdk1.8.0_91.jdk/Contents/Home")
+# Put here your JAVA_HOME path
+os.putenv("JAVA_HOME", "/usr/lib/jvm/java-8-openjdk-amd64")
 
 import minerl
 import gym
