@@ -30,6 +30,11 @@
    - [(GA) Genetic algorithm (with crossover and more relaxed survivorship policy)](./bipedal_walker/GA_crossover.py)
 - [information extraction from NDA documents](./named_entity_recognition) -  named entity recognition and information extraction tasks  
    - [(BERT) solution based on huggingface pretrained BERT transformers](./named_entity_recognition/BERT.py)
+- [publication date predication from text](./temporal_classification_polish) - using large language models for temporal prediction
+   - [(BERT) solution based on polish BERT with custom fine-tuining](./temporal_classification_polish/BERT.py)
+- [contrastive learning on CIFAR-10](./cifar10) - Building generative models of visual data. Next step after MNIST autoencoders and GANs
+   - [(SimCLR) A Simple Framework for Contrastive Learning of Visual Representations](./cifar10/SimCLR.py)
+
   
         
 
