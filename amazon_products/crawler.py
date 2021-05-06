@@ -27,8 +27,15 @@ URL_DB = {}
 URL_STACK = deque()
 
 
-def push_link(url):
+def normalize_url(url):
     url = url.strip()
+    url = url.split('?')[0]
+    url = url.split('ref=')[0]
+    return url
+
+
+def push_link(url):
+    url = normalize_url(url)
     if url.startswith("/") \
             and not url.startswith("/gp/") \
             and not url.startswith("/hz/") \
@@ -43,6 +50,7 @@ def push_link(url):
             and '/product-reviews/' not in url \
             and '/review/' not in url \
             and '/b/' not in url \
+            and '/e/' not in url \
             and '/b?' not in url:
         if url not in URL_DB:
             URL_STACK.append(url)
@@ -65,7 +73,7 @@ def next_page():
     f_path = 'html/' + str(MAX_INDEX) + '.html'
     assert not os.path.isfile(f_path)
     with open(f_path, 'wb+') as f:
-        f.write(('<!--'+url+'-->\n').encode('utf-8'))
+        f.write(('<!--' + url + '-->\n').encode('utf-8'))
         f.write(resp.content)
     for deeper_url in soup.select("a[href]"):
         push_link(deeper_url["href"])
