@@ -302,5 +302,3 @@ for epoch in range(EPOCHS):
         plt.clf()
         plt.plot(losses)
         plt.pause(interval=0.001)
-
-open('captcha_recognizer_rnn.py')
