@@ -31,7 +31,8 @@ with torch.no_grad():
     DATA = (DATA - 0.5) * 2
     # Now pixels have real values between -1 and 1
     # And this is crucial for learning! If the pixels take
-    # different set of values everything fails miserably
+    # different set of values everything fails miserably. That's because
+    # Generator uses Tanh activation in the output layer
 dataloader = torch.utils.data.DataLoader(DATA, batch_size=bs, shuffle=True, drop_last=True)
 
 z_dim = 100

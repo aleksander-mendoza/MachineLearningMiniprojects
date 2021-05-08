@@ -1,5 +1,7 @@
 # With help from
 # https://pytorch.org/tutorials/beginner/dcgan_faces_tutorial.html
+# and architecture from
+# https://github.com/AKASHKADEL/dcgan-mnist
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -44,7 +46,9 @@ class Generator(nn.Module):
             nn.ConvTranspose2d(nz, ngf * 4, 4, 1, 0, bias=False),
             nn.BatchNorm2d(ngf * 4),
             nn.ReLU(True),
-
+            # It seems that somehow, having stride==2 is crucial for learning
+            # You can take a look at DCGAN1.py, which uses stride==1
+            # and it fails to generate any digits
             nn.ConvTranspose2d(ngf * 4, ngf * 2, 3, 2, 1, bias=False),
             nn.BatchNorm2d(ngf * 2),
             nn.ReLU(True),

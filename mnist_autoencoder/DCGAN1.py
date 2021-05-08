@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-bs = 128
+bs = 1024
 
 train_dataset = tv.datasets.MNIST(root='.', train=True, download=True)  # , transform=transform)
 with torch.no_grad():
