@@ -1,50 +1,39 @@
 # With help from
 # https://pytorch.org/tutorials/beginner/dcgan_faces_tutorial.html
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision as tv
+import torch.optim as optim
+from torchvision import datasets, transforms
 from torch.autograd import Variable
-from torch.utils.data import DataLoader
-from torchvision.transforms import transforms
-from tqdm import tqdm
+import torchvision as tv
 from matplotlib import pyplot as plt
 
-# If you get 503 while downloading MNIST then download it manually
-# wget www.di.ens.fr/~lelarge/MNIST.tar.gz
-# tar -zxvf MNIST.tar.gz
-BATCH_SIZE = 32
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-DEVICE = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
+bs = 128
 
-transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
-trainset = tv.datasets.MNIST(root='.', train=True, download=True, transform=transform)
-dataloader = DataLoader(trainset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
+train_dataset = tv.datasets.MNIST(root='.', train=True, download=True)  # , transform=transform)
+with torch.no_grad():
+    DATA = train_dataset.data.float()
+    # Pixels have integer values between 0 and 255
+    DATA = DATA / 255
+    # Now pixels have real values between 0 and 1
+    DATA = (DATA - 0.5) * 2
+    # Now pixels have real values between -1 and 1
+    # And this is crucial for learning! If the pixels take
+    # different set of values everything fails miserably
+    DATA = DATA.unsqueeze(3)  # one channel for grayscale pixels
+dataloader = torch.utils.data.DataLoader(DATA, batch_size=bs, shuffle=True, drop_last=True)
 
-
-def imshow(inp):
-    inp = inp.cpu().detach().numpy()
-    mean = 0.1307
-    std = 0.3081
-    inp = ((mean * inp) + std)
-    plt.clf()
-    plt.imshow(inp, cmap='gray')
-    plt.pause(interval=0.01)
-
-
-def bimshow(batch):
-    with torch.no_grad():
-        output = model(batch.to(DEVICE)).cpu()
-        imshow(torch.cat((batch.view(-1, 28), output.view(-1, 28)), 1))
-
+mnist_dim = train_dataset.train_data.size(1) * train_dataset.train_data.size(2)
+hidden_size = 256
 
 width = 28
 height = 28
 latent_width = 1
 latent_height = 1
 latent_channels = 64
-generator_hidden_channels = 1
 img_channels = 1
 
 
@@ -53,13 +42,13 @@ class Generator(nn.Module):
     def __init__(self):
         super(Generator, self).__init__()
         #
-        self.conv1 = nn.ConvTranspose2d(latent_channels, generator_hidden_channels * 8, kernel_size=4)
-        self.conv2 = nn.ConvTranspose2d(generator_hidden_channels * 8, generator_hidden_channels * 8, kernel_size=5)
-        self.conv3 = nn.ConvTranspose2d(generator_hidden_channels * 8, generator_hidden_channels * 8, kernel_size=5)
-        self.conv4 = nn.ConvTranspose2d(generator_hidden_channels * 8, generator_hidden_channels * 4, kernel_size=5)
-        self.conv5 = nn.ConvTranspose2d(generator_hidden_channels * 4, generator_hidden_channels * 2, kernel_size=5)
-        self.conv6 = nn.ConvTranspose2d(generator_hidden_channels * 2, generator_hidden_channels, kernel_size=5)
-        self.conv7 = nn.ConvTranspose2d(generator_hidden_channels, img_channels, kernel_size=5)
+        self.conv1 = nn.ConvTranspose2d(latent_channels, 32, kernel_size=4)
+        self.conv2 = nn.ConvTranspose2d(32, 32, kernel_size=5)
+        self.conv3 = nn.ConvTranspose2d(32, 32, kernel_size=5)
+        self.conv4 = nn.ConvTranspose2d(32, 16, kernel_size=5)
+        self.conv5 = nn.ConvTranspose2d(16, 8, kernel_size=5)
+        self.conv6 = nn.ConvTranspose2d(8, 4, kernel_size=5)
+        self.conv7 = nn.ConvTranspose2d(4, img_channels, kernel_size=5)
         #
 
     def forward(self, x):
@@ -69,7 +58,7 @@ class Generator(nn.Module):
         x = F.relu(self.conv4(x), True)
         x = F.relu(self.conv5(x), True)
         x = F.relu(self.conv6(x), True)
-        x = F.relu(self.conv7(x), True)
+        x = torch.tanh(self.conv7(x))
         return x
 
 
@@ -80,50 +69,122 @@ class Discriminator(nn.Module):
         self.conv1 = nn.Conv2d(1, 2, kernel_size=5)
         self.conv2 = nn.Conv2d(2, 4, kernel_size=5)
         self.conv3 = nn.Conv2d(4, 8, kernel_size=5)
+        self.conv4 = nn.Conv2d(8, 16, kernel_size=5)
+        self.conv5 = nn.Conv2d(16, 32, kernel_size=5)
+        self.conv6 = nn.Conv2d(32, 32, kernel_size=5)
+        self.lin = nn.Linear(32 * 4 * 4, 1)
 
     def forward(self, x):
         x = self.conv1(x)
-        x = F.relu(x, True)
-        x = self.conv2(x)
-        x = F.relu(x, True)
-        x = self.conv3(x)
-        x = F.relu(x, True)
-        # x = torch.sigmoid(x)
+        x = F.leaky_relu(x, True)  # Leaky ReLU makes a huge difference!
+        x = self.conv2(x)  # If you use just a regular ReLU, the discriminator
+        x = F.leaky_relu(x, True)  # won't propagate gradient well enough and as a result
+        x = self.conv3(x)  # generator won't know how to improve itself. The results of training with
+        x = F.leaky_relu(x, True)  # ReLU are just black images with nothing on them
+        x = self.conv4(x)
+        x = F.leaky_relu(x, True)
+        x = self.conv5(x)
+        x = F.leaky_relu(x, True)
+        x = self.conv6(x)
+        x = F.leaky_relu(x, True)
+        x = x.reshape(bs, -1)
+        x = self.lin(x)
+        x = torch.sigmoid(x)
         return x
 
 
-# Defining Parameters
+G = Generator().to(device)
+D = Discriminator().to(device)
+criterion = nn.BCELoss()
 
-EPOCHS = 1000
-G = Generator().to(DEVICE)
-D = Discriminator().to(DEVICE)
-distance = nn.MSELoss()
-optimizerG = torch.optim.Adam(G.parameters())
-optimizerD = torch.optim.Adam(D.parameters())
-outer_bar = tqdm(total=EPOCHS, position=0)
-inner_bar = tqdm(total=len(trainset), position=1)
-outer_bar.set_description("Epochs")
-for epoch in range(EPOCHS):
-    inner_bar.reset()
-    for data in dataloader:
-        real_img, _ = data
-        real_img = real_img.to(DEVICE)
-        loss_real = - torch.log(D(real_img))
-        loss_real.backward()
-        optimizerD.step()
+# optimizer
+lr = 0.0002
+G_optimizer = optim.Adam(G.parameters(), lr=lr)
+D_optimizer = optim.Adam(D.parameters(), lr=lr)
 
-        mean_loss_real = loss_real.mean().item()
+n_epoch = 2000
+D_losses, G_losses = [], []
+real_scores, fake_scores = [], []
+for epoch in range(1, n_epoch + 1):
+    D_loss_total = 0
+    G_loss_total = 0
+    fake_score_total = 0
+    real_score_total = 0
+    for batch_idx, images in enumerate(dataloader):
+        # =======================Train the discriminator=======================#
 
-        latent = torch.rand(BATCH_SIZE, latent_channels, latent_width, latent_height, device=DEVICE)
-        fake_img = G(latent)
-        loss_fake = torch.log(1 - D(fake_img.detach()))
+        # train discriminator on real
+        images = Variable(images.to(device))
+        real_labels = Variable(torch.ones(bs, 1).to(device))
+        fake_labels = Variable(torch.zeros(bs, 1).to(device))
+        # images.size() = (bs, width, height, channels)
+        images = images.transpose(1, 3)
+        # images.size() = (bs, channels, height, width)
+        outputs = D(images)
+        d_loss_real = criterion(outputs, real_labels)
+        real_score = outputs
 
-        loss = distance(output, img)
-        optimizerG.zero_grad()
-        loss.backward()
-        optimizerG.step()
+        # train discriminator on fake
+        z = Variable(torch.randn(bs, latent_channels, 1, 1).to(device))
+        fake_images = G(z)
 
-        inner_bar.update(BATCH_SIZE)
-        inner_bar.set_description("Avg loss %.2f" % (loss.item() / BATCH_SIZE))
-    outer_bar.update(1)
-    bimshow(next(iter(dataloader))[0])
+        outputs = D(fake_images)
+        d_loss_fake = criterion(outputs, fake_labels)
+        fake_score = outputs
+
+        # gradient backprop & optimize ONLY D's parameters
+        d_loss = d_loss_real + d_loss_fake
+        D.zero_grad()
+        G.zero_grad()
+        d_loss.backward()
+        D_optimizer.step()
+
+        D_loss_total += d_loss.item()
+        real_score_total += real_score.sum().item()
+        fake_score_total += fake_score.sum().item()
+
+        # =======================Train the generator=======================#
+
+        z = Variable(torch.randn(bs, latent_channels, 1, 1).to(device))
+
+        fake_images = G(z)
+        outputs = D(fake_images)
+        g_loss = criterion(outputs, real_labels)
+
+        # gradient backprop & optimize ONLY G's parameters
+        G.zero_grad()
+        D.zero_grad()
+        g_loss.backward()
+        G_optimizer.step()
+
+        G_loss_total += g_loss.item()
+    fake_score_total /= len(DATA)
+    real_score_total /= len(DATA)
+    D_loss_total /= len(DATA)
+    D_loss_total /= len(DATA)
+    D_losses.append(D_loss_total)
+    G_losses.append(G_loss_total)
+    real_scores.append(real_score_total)
+    fake_scores.append(fake_score_total)
+    with torch.no_grad():
+        test_bach_size = 4
+        test_z = Variable(torch.randn(test_bach_size, latent_channels, 1, 1).to(device))
+        generated = G(test_z)
+        generated = generated.view(-1, 28)
+        generated = generated.detach()
+        generated = ((generated / 2) + 0.5)
+        generated = generated.cpu().numpy()
+        plt.clf()
+        plt.subplot(1, 3, 1)
+        plt.plot(G_losses, label="generator loss")
+        plt.plot(D_losses, label="discriminator loss")
+        plt.legend(loc="upper left")
+        plt.subplot(1, 3, 2)
+        plt.plot(real_scores, label="real score")
+        plt.plot(fake_scores, label="fake score")
+        plt.legend(loc="upper left")
+        plt.subplot(1, 3, 3)
+        plt.imshow(generated, cmap='gray')
+        plt.pause(interval=0.01)
+    # print('[%d/%d]: loss_d: %.3f, loss_g: %.3f' % (
+    #     (epoch), n_epoch, torch.mean(torch.FloatTensor(D_losses)), torch.mean(torch.FloatTensor(G_losses))))
