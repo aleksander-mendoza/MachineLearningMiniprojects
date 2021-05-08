@@ -12,7 +12,8 @@
    - [(AE) Autoencoder solution](./mnist_autoencoder/MAE.py)
    - [(VAE) Variational autoencoder](./mnist_autoencoder/VAE.py)
    - [(GAN) Generative adversarial neural network](./mnist_autoencoder/GAN.py)
-   - [(DCGAN) Deep convolutional generative adversarial neural network](./mnist_autoencoder/DCGAN.py)
+   - [(DCGAN) Deep convolutional generative adversarial neural network (version with stride 1)](./mnist_autoencoder/DCGAN1.py)
+   - [(DCGAN) Deep convolutional generative adversarial neural network (version with stride 2)](./mnist_autoencoder/DCGAN2.py)
 - [Moving MNIST autoencoder](./mnist_autoencoder) - State-space model for encoding time series over latent space 
    - [(ConvLSTM) Convolutional LSTM](./moving_mnist_autoencoder/ConvLSTM.py)
    - [(Deterministic LSTM) recurrent network over latent space (with epsilon teacher forcing) ](./moving_mnist_autoencoder/LSTM.py)
@@ -34,8 +35,10 @@
    - [(BERT) solution based on polish BERT with custom fine-tuining](./temporal_classification_polish/BERT.py)
 - [contrastive learning on CIFAR-10](./cifar10) - Building generative models of visual data. Next step after MNIST autoencoders and GANs
    - [(SimCLR) A Simple Framework for Contrastive Learning of Visual Representations](./cifar10/SimCLR.py)
-
-  
+- [captcha solver](./captcha_recognizer)
+   - [(Resnet+RNN) Resnet with RNN head](./captcha_recognizer/captcha_recognizer_rnn.py)
+   - [(Resnet) Resnet with linear head](./captcha_recognizer/captcha_recognizer_lin.py) 
+   - [(Resnet+SimCLR) Resnet pretraiend with contrastive learning](./captcha_recognizer/captcha_recognizer_simcrl.py) 
         
 
 ## Yet to be solved
