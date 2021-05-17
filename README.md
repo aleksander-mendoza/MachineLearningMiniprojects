@@ -38,8 +38,9 @@
 - [captcha solver](./captcha_recognizer)
    - [(Resnet+RNN) Resnet with RNN head](./captcha_recognizer/captcha_recognizer_rnn.py)
    - [(Resnet) Resnet with linear head](./captcha_recognizer/captcha_recognizer_lin.py) 
-   - [(Resnet+SimCLR) Resnet pretraiend with contrastive learning](./captcha_recognizer/captcha_recognizer_simcrl.py) 
-        
+   - [(Resnet+SimCLR) Resnet pretraiend with contrastive learning](./captcha_recognizer/captcha_recognizer_simcrl.py)
+- [English homework](./english_homework) - My English teacher gave me a tedious homework. I didn't want to do it, so I let BERT do it for me
+   - [(BERT)](./english_homework/TFS.py) 
 
 ## Yet to be solved
 - [Minecraft exploratory reinforcement learning](./minecraft) - reinforcement learning agent that learns to navigate minecraft world 
