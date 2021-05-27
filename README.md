@@ -43,6 +43,10 @@
    - [(BERT)](./english_homework/TFS.py)
 - [Punctuation restoral for ASR](./punctuation_restoral) - PoleEval challenge for punctuation restoral to aid ASR systems
    - [(PolBERT)](./punctuation_restoral/Main.py)
+- [News topic classifier](./newsgroup) - classifies news fragment into one of specified categories
+   - [(Naive Bayes) multiclass naive bayes with logarithmic probabilities for numerical stability](./newgroup/Bayes.py)
+- [Japanese Amazon products web crawler](./amazon_products)
+   - [(Facets) Web scraper for facet extraction (with HTTP-header spoofing and CAPTCHA solver)](./amazon_products/scraper.py)
 
 ## Yet to be solved
 - [Minecraft exploratory reinforcement learning](./minecraft) - reinforcement learning agent that learns to navigate minecraft world 
