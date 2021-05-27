@@ -119,7 +119,8 @@ def augmentations(img):
     return img
 
 
-optim = torch.optim.Adam(model.parameters(), lr=0.00001)
+optim_model = torch.optim.Adam(model.parameters(), lr=0.00001)
+optim_head = torch.optim.Adam(head.parameters(), lr=0.00001)
 VISUALIZE_AUGMENTATIONS = 0
 criterion = torch.nn.CrossEntropyLoss()
 labels = torch.cat([torch.arange(BATCH_SIZE) for i in range(2)], dim=0)
@@ -176,9 +177,11 @@ for epoch in range(EPOCHS):
         logits = logits / TEMPERATURE
         loss = criterion(logits, zeros)
         total_loss += loss.item()
-        optim.zero_grad()
+        optim_model.zero_grad()
+        optim_head.zero_grad()
         loss.backward()
-        optim.step()
+        optim_model.step()
+        optim_head.step()
         batch_bar.set_description("Loss "+str(loss.item()))
         batch_bar.update(BATCH_SIZE)
     total_loss = BATCH_SIZE*2*total_loss/len(data)
