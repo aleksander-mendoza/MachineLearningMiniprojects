@@ -2,7 +2,7 @@
 
 Solution based on BERT using hugginface model Polbert
 
-(https://github.com/kldarek/polbert)[https://github.com/kldarek/polbert]
+https://github.com/kldarek/polbert
 
 Original transformer was a fill-in language model. Fine tuned to become token classifier.
 This model tries to guess one of the following 9 punctuation symbols `None`, `.`, `?`, `!`, `:`, `;`, `,`, `-`, `...`. It achieves F-score of
