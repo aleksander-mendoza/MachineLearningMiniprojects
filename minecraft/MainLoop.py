@@ -1,11 +1,12 @@
 import os
+
 # Put here your JAVA_HOME path
 os.putenv("JAVA_HOME", "/usr/lib/jvm/java-8-openjdk-amd64")
 
 import minerl
 import gym
-env = gym.make('MineRLNavigateDense-v0')
 
+env = gym.make('MineRLNavigateDense-v0')
 
 obs = env.reset()
 done = False
@@ -14,7 +15,7 @@ net_reward = 0
 while not done:
     action = env.action_space.noop()
 
-    action['camera'] = [0, 0.03*obs["compassAngle"]]
+    action['camera'] = [0, 0.03 * obs["compassAngle"]]
     action['back'] = 0
     action['forward'] = 1
     action['jump'] = 1
