@@ -16,7 +16,7 @@ An example of starting up minerl environment using XML with custom environment s
 
 [LavaMission.py](./LavaMission.py)
 
-Implementation of contrastive learning based on SimCLR + ResNet50. It's is to provide higher-level representation of
+Implementation of contrastive learning based on SimCLR + ResNet50. Its goal is to provide higher-level representation of
 game world state from video input.
 
 [SimCLR.py](./SimCLR.py)

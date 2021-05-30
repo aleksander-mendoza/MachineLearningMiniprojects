@@ -10,6 +10,10 @@ eig = graph.eig(eigenvectors=True)
 if (eig.eigenvalues[:, 1] != 0).all():
     print("Warning! You randomly got a matrix with complex eigenvalues")
 print(eig)
+for eig_vec_idx, eig_val in enumerate(eig.eigenvalues):
+    if eig_val[0] == 1 and eig_val[1] == 0:
+        eig_vec = eig.eigenvectors[:, eig_vec_idx]
+        break
 
 xvals = np.linspace(-4, 4, 9)
 yvals = np.linspace(-3, 3, 7)
@@ -23,11 +27,11 @@ for iteration in range(0, 100):
     likelihood_numpy = likelihoods.numpy()
     for j in range(steps + 1):
         plt.clf()
-        plt.title("Iteration "+str(iteration))
+        plt.title("Iteration " + str(iteration))
         plt.grid(True)
         plt.axis("equal")
-        for eig_vec in eig.eigenvectors.T:
-            plt.arrow(0, 0, eig_vec[0], eig_vec[1])
+        for ev in eig.eigenvectors.T:
+            plt.arrow(0, 0, ev[0], ev[1])
 
         intermediate_transformation = j / steps * transformation + (1 - j / steps) * np.eye(2)
         transformed_likelihood = np.dot(intermediate_transformation, likelihood_numpy)
@@ -37,7 +41,24 @@ for iteration in range(0, 100):
         plt.pause(interval=min(0.001, duration / steps))
 
     likelihoods = graph @ likelihoods
-    print(iteration, likelihoods / likelihoods.sum())
-print(eig)
-print(eig.eigenvectors[:, 0], '==', graph @ eig.eigenvectors[:, 0])
-print(likelihoods.sum(), eig.eigenvectors[:, 0].sum(), likelihoods / eig.eigenvectors[:, 0])
+    print("iteration=", iteration)
+    print("eigen vector=", eig_vec)
+    print("approximation=", likelihoods)
+    print("eigen vector/approximation ratio=", likelihoods / eig_vec)
+
+# torch.return_types.eig(
+# eigenvalues=tensor([[-0.5000,  0.0000],
+#         [ 1.0000,  0.0000],
+#         [-0.3904,  0.0000],
+#         [ 0.6404,  0.0000]]),
+# eigenvectors=tensor([[-0.7071, -0.4472,  0.3813,  0.2571],
+#         [ 0.7071, -0.8944, -0.5955,  0.6587],
+#         [ 0.0000,  0.0000, -0.3813, -0.2571],
+#         [ 0.0000,  0.0000,  0.5955, -0.6587]]))
+# approximation= tensor([4.4721e-01, 8.9443e-01, 9.1873e-21, 2.3534e-20])
+# eigen vector= tensor([-0.4472, -0.8944,  0.0000,  0.0000])
+# monte carlo= [0.46987975 0.88272208 0.00271607 0.00271607]
+# approximation / monte carlo ratio= tensor([9.5176e-01, 1.0133e+00, 3.3826e-18, 8.6646e-18], dtype=torch.float64)
+# eigen vector / approximation ratio= tensor([-1.0000, -1.0000,  0.0000,  0.0000])
+# monte carlo / eigen vector ratio= tensor([-1.0507, -0.9869,     inf,     inf], dtype=torch.float64)
+
