@@ -1,4 +1,5 @@
-from logging.config import valid_ident
+import os
+import random
 
 import torch
 import torch.nn as nn
@@ -12,6 +13,7 @@ import torchvision.transforms.functional as F2
 from tqdm import tqdm
 import minerl
 import numpy as np
+import cv2
 
 DEVICE = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 crop = transforms.RandomCrop(32, padding=4)
@@ -39,9 +41,11 @@ class Head(torch.nn.Module):
         return x
 
 
-model = torchvision.models.resnet50(pretrained=True).to(DEVICE)
+model = torchvision.models.resnet50(pretrained=True)
 model.fc = nn.Linear(2048, 128)  # By default the pretrained ResnetHas 1000 classes, but we only want 128
-head = Head().to(DEVICE)
+head = Head()
+head = head.to(DEVICE)
+model = model.to(DEVICE)
 
 
 def augmentations(img):
@@ -73,90 +77,114 @@ def augmentations(img):
 
     return img
 
-t = np.load('data/MineRLNavigateDense-v0/v3_calculating_fava_bean_siren-3_155-844/rendered.npz')
+
+def get_model_memory_usage(m):
+    mem_params = sum([param.nelement() * param.element_size() for param in m.parameters()])
+    mem_bufs = sum([buf.nelement() * buf.element_size() for buf in m.buffers()])
+    return mem_params + mem_bufs
+
+
 optim_model = torch.optim.Adam(model.parameters(), lr=0.00001)
 optim_head = torch.optim.Adam(head.parameters(), lr=0.00001)
-VISUALIZE_AUGMENTATIONS = 60
+VISUALIZE_AUGMENTATIONS = 0
 criterion = torch.nn.CrossEntropyLoss()
-labels = torch.cat([torch.arange(BATCH_SIZE) for i in range(2)], dim=0)
+labels = torch.cat([torch.arange(IMG_PAIRS_IN_BATCH) for i in range(2)], dim=0)
 labels = (labels.unsqueeze(0) == labels.unsqueeze(1)).float()
 labels = labels.to(DEVICE)
 mask = torch.eye(labels.shape[0], dtype=torch.bool).to(DEVICE)
 labels = labels[~mask].view(labels.shape[0], -1)
-zeros = torch.zeros(BATCH_SIZE * 2, dtype=torch.long).to(DEVICE)
+zeros = torch.zeros(IMG_PAIRS_IN_BATCH * 2, dtype=torch.long).to(DEVICE)
 TEMPERATURE = 0.05
 EPOCHS = 1000000
 data = minerl.data.make('MineRLObtainDiamond-v0', data_dir='data', num_workers=1, minimum_size_to_dequeue=2)
-epoch_bar = tqdm(total=EPOCHS, position=1, desc="Epoch")
 losses = []
-SEQ_LEN = IMG_PAIRS_IN_BATCH*2
+SEQ_LEN = IMG_PAIRS_IN_BATCH * 2
+ALL_MISSIONS = [d for d in os.listdir('data') if d.startswith('MineRL')]
+ALL_RECORDINGS = [mission + '/' + recording for mission in ALL_MISSIONS for recording in os.listdir('data/' + mission)]
+print("Found " + str(len(ALL_RECORDINGS)) + " recordings")
 
-for epoch in range(EPOCHS):
+for epoch in tqdm(range(EPOCHS), desc="Epoch"):
     total_loss = 0
 
     if VISUALIZE_AUGMENTATIONS == 0:
         plt.clf()
         plt.plot(losses)
         plt.pause(interval=0.001)
+    random.shuffle(ALL_RECORDINGS)
+    for recording in tqdm(ALL_RECORDINGS, desc="Batch"):
+        video = cv2.VideoCapture('data/' + recording + '/recording.mp4')
+        frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+        anchors = []
+        targets = []
+        for pair in range(IMG_PAIRS_IN_BATCH):
+            def read(offset):
+                assert video.isOpened()
+                while True:
+                    video.set(cv2.CAP_PROP_POS_FRAMES, offset)
+                    was_successful, frame = video.read()
+                    if not was_successful:
+                        offset -= 1
+                        print("Error ", offset, "/", frame_count)
+                        continue
+                    frame = cv2.resize(frame, dsize=(32, 32), interpolation=cv2.INTER_CUBIC)
+                    frame = torch.from_numpy(frame)
+                    frame = frame.transpose(0, 2)
+                    frame = frame / 255
+                    assert frame.size() == torch.Size([CHANNELS, HEIGHT, WIDTH])
+                    return frame, offset
 
-    for current_state, action, reward, next_state, done in data.batch_iter(batch_size=1, preload_buffer_size=1,
-                                                                           num_epochs=1, seq_len=SEQ_LEN):
-        for video_in_batch in current_state['pov']:
-            video_in_batch = torch.from_numpy(video_in_batch)
-            assert video_in_batch.size() == torch.Size([SEQ_LEN, ORIGINAL_HEIGHT, ORIGINAL_WIDTH, CHANNELS]), video_in_batch.size()
-            video_in_batch = video_in_batch.transpose(1, 3)
-            assert video_in_batch.size() == torch.Size([SEQ_LEN, CHANNELS, ORIGINAL_WIDTH, ORIGINAL_HEIGHT]), video_in_batch.size()
-            video_in_batch = F.interpolate(video_in_batch, size=WIDTH)
-            assert video_in_batch.size() == torch.Size([SEQ_LEN, CHANNELS, WIDTH, HEIGHT]), video_in_batch.size()
-            video_in_batch = video_in_batch.split(2, 0)
-            assert video_in_batch[0].size() == torch.Size([2, CHANNELS, HEIGHT, WIDTH]), video_in_batch[0].size()
-            assert len(video_in_batch) == IMG_PAIRS_IN_BATCH
-            for batch in video_in_batch:
-                # Normally frames have dimension (64,64,3)
 
-                x1 = augmentations(batch)
-                x2 = augmentations(batch)
-                if VISUALIZE_AUGMENTATIONS > 0:
-                    plt.clf()
-                    plt.subplot(1, 3, 1)
-                    plt.imshow((batch.transpose(3, 1).reshape(-1, WIDTH, CHANNELS)))
-                    plt.subplot(1, 3, 2)
-                    plt.imshow((x2.transpose(3, 1).reshape(-1, WIDTH, CHANNELS)))
-                    plt.subplot(1, 3, 3)
-                    plt.imshow((x1.transpose(3, 1).reshape(-1, WIDTH, CHANNELS)))
-                    plt.pause(interval=VISUALIZE_AUGMENTATIONS)
+            frame_offset = random.randint(0, frame_count - 100)  # -100 gives margin of safety,
+            # because video might end earlier than frame_count
+            target, frame_offset = read(frame_offset)
+            targets.append(target)
+            frame_offset -= random.randint(0, 7)
+            anchor, _ = read(frame_offset)
+            anchors.append(anchor)
 
-                x = torch.cat([x1, x2])
-                x = x.to(DEVICE)
-                h = model(x)
-                h = h.reshape(BATCH_SIZE * 2, -1)
-                z = head(h)
+        video.release()
+        anchors = torch.stack(anchors)
+        targets = torch.stack(targets)
+        original = anchors
+        anchors = augmentations(anchors)
+        targets = augmentations(targets)
+        if VISUALIZE_AUGMENTATIONS > 0:
+            plt.clf()
+            plt.subplot(1, 3, 1)
+            plt.imshow((original.transpose(3, 1).reshape(-1, WIDTH, CHANNELS)))
+            plt.subplot(1, 3, 2)
+            plt.imshow((anchors.transpose(3, 1).reshape(-1, WIDTH, CHANNELS)))
+            plt.subplot(1, 3, 3)
+            plt.imshow((targets.transpose(3, 1).reshape(-1, WIDTH, CHANNELS)))
+            plt.pause(interval=VISUALIZE_AUGMENTATIONS)
 
-                s = F.normalize(z, dim=1)
-                cosine_similarity_matrix = torch.matmul(s, s.T)
+        x = torch.cat([anchors, targets])
+        x = x.to(DEVICE)
+        h = model(x)
+        h = h.reshape(IMG_PAIRS_IN_BATCH * 2, -1)
+        z = head(h)
 
-                similarity_matrix = cosine_similarity_matrix[~mask].view(BATCH_SIZE * 2, BATCH_SIZE * 2 - 1)
-                # assert similarity_matrix.shape == labels.shape
+        s = F.normalize(z, dim=1)
+        cosine_similarity_matrix = torch.matmul(s, s.T)
 
-                # select and combine multiple positives
-                positives = similarity_matrix[labels.bool()].view(BATCH_SIZE * 2, 1)
+        similarity_matrix = cosine_similarity_matrix[~mask].view(IMG_PAIRS_IN_BATCH * 2, IMG_PAIRS_IN_BATCH * 2 - 1)
+        # assert similarity_matrix.shape == labels.shape
 
-                # select only the negatives the negatives
-                negatives = similarity_matrix[~labels.bool()].view(BATCH_SIZE * 2, BATCH_SIZE * 2 - 2)
+        # select and combine multiple positives
+        positives = similarity_matrix[labels.bool()].view(IMG_PAIRS_IN_BATCH * 2, 1)
 
-                logits = torch.cat([positives, negatives], dim=1)
+        # select only the negatives the negatives
+        negatives = similarity_matrix[~labels.bool()].view(IMG_PAIRS_IN_BATCH * 2, IMG_PAIRS_IN_BATCH * 2 - 2)
 
-                logits = logits / TEMPERATURE
-                loss = criterion(logits, zeros)
-                total_loss += loss.item()
-                optim_model.zero_grad()
-                optim_head.zero_grad()
-                loss.backward()
-                optim_model.step()
-                optim_head.step()
-                batch_bar.set_description("Loss " + str(loss.item()))
-                batch_bar.update(BATCH_SIZE)
-    total_loss = BATCH_SIZE * 2 * total_loss / len(data)
+        logits = torch.cat([positives, negatives], dim=1)
+
+        logits = logits / TEMPERATURE
+        loss = criterion(logits, zeros)
+        total_loss += loss.item()
+        optim_model.zero_grad()
+        optim_head.zero_grad()
+        loss.backward()
+        optim_model.step()
+        optim_head.step()
+    total_loss = IMG_PAIRS_IN_BATCH * 2 * total_loss / len(ALL_RECORDINGS)
     losses.append(total_loss)
-    epoch_bar.update(1)
-    print("total loss=", total_loss)
