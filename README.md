@@ -1,7 +1,5 @@
 # Machine Learning Mini-projects
 
-## Solved
-
 - [english phonetics](./phonetics) - seq2seq model for translating english words to their phonetic transcription
    - [(LSTM) Long-Short-Term-Memory units](./phonetics/PH.py)
    - [(ResNetLSTM) custom Long-Short-Term-Memory with residual connections, allowing for building deep networks](./phonetics/PH_ResNetLSTM.py)
@@ -47,7 +45,5 @@
    - [(Naive Bayes) multiclass naive bayes with logarithmic probabilities for numerical stability](./newgroup/Bayes.py)
 - [Japanese Amazon products web crawler](./amazon_products)
    - [(Facets) Web scraper for facet extraction (with HTTP-header spoofing and CAPTCHA solver)](./amazon_products/scraper.py)
-
-## Yet to be solved
 - [Minecraft exploratory reinforcement learning](./minecraft) - reinforcement learning agent that learns to navigate minecraft world 
-
+   - [(SimCLR) Contrastive learning for higher-level world representations from visual inputs (based on ResNet50)](./minecraft/SimCLR.py)
