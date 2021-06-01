@@ -94,11 +94,67 @@ def home():
      }
     }
   </script>
+  <style>
+    .search-input-container{
+        display: flex;
+        max-width: 1100px;
+        width: 100%;
+        margin: 0 auto;
+    }
+
+    .search-input-container > textarea{
+        height: 25px;
+        line-height: 25px;
+        font-size: 17px;
+        color: #495057;
+        resize: none;
+        flex-grow: 1;
+        border: none;
+        padding: 5px 10px;
+        outline: none;
+        background-color: #f3f3f3;
+        padding: 10px;
+        border-top-left-radius: 15px;
+        border-bottom-left-radius: 15px;
+    }
+
+    .search-input-container > button{
+        cursor: pointer;
+        background: none;
+        border: none;
+        cursor: pointer;
+        border-radius: 2px;
+        font-size: 14px;
+        font-weight: 400;
+        background-color: #000;
+        border-top-right-radius: 15px;
+        border-bottom-right-radius: 15px;
+        color: #fff;
+    }
+
+    #links{
+        list-style: none;
+        max-width: 1100px;
+        width: 100%;
+        margin: 1rem auto;
+        padding: 0;
+    }
+
+    #links > li{
+        padding: 0.5rem 0;
+    }
+
+    #links > li > a{
+        color: #495057;
+    }
+  </style>
 </head>
 
 <body>
-  <textarea id="query"></textarea> <br/>
-  <button onclick="search(query.value)">Search</button> <br/>
+  <div class="search-input-container">
+    <textarea id="query"></textarea> <br/>
+    <button onclick="search(query.value)">Search</button> <br/>
+  </div>
   <ul id="links"></ul>
 </body>
 </html>
