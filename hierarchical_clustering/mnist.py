@@ -15,6 +15,7 @@ from scipy.cluster.hierarchy import dendrogram, linkage
 
 if not os.path.isfile('../mnist_autoencoder/vae.pth'):
     print("Run mnist_autoencoder/VAE.py to generate vae.pth first")
+    exit()
 
 DEVICE = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 
