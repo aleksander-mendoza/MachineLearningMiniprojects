@@ -9,6 +9,7 @@
 - [MNIST autoencoder](./mnist_autoencoder) - convolutional autoencoder that compresses MNIST digits 
    - [(AE) Autoencoder solution](./mnist_autoencoder/MAE.py)
    - [(VAE) Variational autoencoder](./mnist_autoencoder/VAE.py)
+   - [(VAE) interactive explorer for 2D latent space](./mnist_autoencoder/VAE_explorer.py)
    - [(GAN) Generative adversarial neural network](./mnist_autoencoder/GAN.py)
    - [(DCGAN) Deep convolutional generative adversarial neural network (version with stride 1)](./mnist_autoencoder/DCGAN1.py)
    - [(DCGAN) Deep convolutional generative adversarial neural network (version with stride 2)](./mnist_autoencoder/DCGAN2.py)
@@ -47,3 +48,10 @@
    - [(Facets) Web scraper for facet extraction (with HTTP-header spoofing and CAPTCHA solver)](./amazon_products/scraper.py)
 - [Minecraft exploratory reinforcement learning](./minecraft) - reinforcement learning agent that learns to navigate minecraft world 
    - [(SimCLR) Contrastive learning for higher-level world representations from visual inputs (based on ResNet50)](./minecraft/SimCLR.py)
+- [PageRank](./page_rank)
+   - [Animation showcasing Monte-carlo appraoch to page-rank](./page_rank/monte_carlo.py)
+   - [Animation showcasing effects of iterative linear transformation for pare-rank](./page_rank/)
+   - [A small website that implements page-rank integrated with Solr backend for browsing amazon products]()
+- [hierarchical clustering](./hierarchical_clustering)
+   - [Animation showcasing various hierachical clustering algorithms](./hierarchical_clustering/anim.py)
+   - [unsupervised MNIST classification using Ward's method](./hierarchical_clustering/mnist.py)
