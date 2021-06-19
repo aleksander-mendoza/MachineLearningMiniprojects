@@ -12,7 +12,56 @@ import sys
 # Get data from https://github.com/poleval/2021-punctuation-restoration
 ##################################################################################
 
+import re
 
+fixer = re.compile("([^ ]) +([.,?!:;-]+)(.)")
+
+
+# def fix_bert_spaces(lo):
+#     start = 0
+#     new_lo = ""
+#     for m in fixer.finditer(lo):
+#         before = m.group(1)
+#         punc = m.group(2)
+#         after = m.group(3)
+#         end, newstart = m.span()
+#         new_lo += lo[start:end]
+#         if before in ['.', '?', '!', ':', ';', ',', '-']:
+#             new_lo += before
+#         else:
+#             new_lo += before + punc
+#         if after.isspace():
+#             new_lo += after
+#         else:
+#             new_lo += " " + after
+#         start = newstart
+#     new_lo += lo[start:]
+#     return new_lo
+
+
+# with open('2021-punctuation-restoration/train/out.tsv') as o, \
+#         open('2021-punctuation-restoration/train/expected.tsv') as e, \
+#         open('2021-punctuation-restoration/train/in.tsv') as i:
+#     for lo, le, li in zip(o, e, i):
+#         lo = fix_bert_spaces(lo)
+#         lo = lo.split(' ')
+#         le = le.split(' ')
+#
+#         if len(lo) != len(le):
+#             out_o = []
+#             out_i = []
+#             out_e = []
+#             for i in range(min(len(lo), len(le))):
+#                 if lo[i].rstrip(".?,!:;-") != le[i].rstrip(".?,!:;-"):
+#                     out_o.append(lo[i])
+#                     out_e.append(le[i])
+#
+#             print("o=", out_o)
+#             print("e=", out_e)
+#             print("lo=", lo)
+#             print("le=", le)
+#             print("i=", li)
+# exit()
 id_to_lbl = ['', '.', '?', '!', ':', ';', ',', '-', '...']
 LABELS = {'.': 1, '?': 2, '!': 3, ':': 4, ';': 5, ',': 6, '-': 7, '...': 8, '': 0}
 assert len(LABELS) == len(id_to_lbl)
@@ -26,6 +75,11 @@ TRAINING_MODE = False
 DEVICE = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 
 tokenizer = BertTokenizerFast.from_pretrained("dkleczek/bert-base-polish-cased-v1")
+trouble_tokens = []
+for t in 'ニ尾の化け三大亀五イルカ馬八尾六尾の蛞蝓':
+    if tokenizer.add_tokens([t]) == 1:
+        trouble_tokens.append(tokenizer.vocab[t])
+trouble_tokens = set(trouble_tokens)
 
 if os.path.isdir('checkpoints') and os.listdir('checkpoints') != []:
     last_model = max([int(x[len('epoch_'):]) for x in os.listdir('checkpoints')])
@@ -186,19 +240,23 @@ if TRAINING_MODE:
             print_summary(epoch, train_prediction_table, val_prediction_table, sys.stdout)
 else:  # TRAINING_MODE == False
     model.eval()
-    DIR = 'train'
+    DIR = 'test-A'
     with open('2021-punctuation-restoration/' + DIR + '/in.tsv') as f, open(
             '2021-punctuation-restoration/' + DIR + '/out.tsv', 'w+') as o:
         for line in tqdm(f, desc="Processing", total=200):
-            _, line = line.split('\t')
+            _, line = line.strip().split('\t')
             encoded = tokenizer([line], padding=True, truncation=True)
-            input_ids = torch.tensor(encoded['input_ids'], device=DEVICE)
+            input_ids = torch.tensor(encoded['input_ids'])
+            for i in range(len(input_ids[0])):
+                if input_ids[0, i].item() in trouble_tokens:
+                    input_ids[0, i] = tokenizer.unk_token_id
+            input_ids = input_ids.to(DEVICE)
             attention_mask = torch.tensor(encoded['attention_mask'], device=DEVICE)
             length = input_ids.size()[1]
             if 1024 >= length > 512:
                 output_part_0 = model(input_ids[:, :512], attention_mask=attention_mask[:, :512]).logits
                 output_part_1 = model(input_ids[:, -512:], attention_mask=attention_mask[:, -512:]).logits
-                overlapping_region = length - 2*(length-512)
+                overlapping_region = length - 2 * (length - 512)
                 output = torch.hstack([output_part_0, output_part_1[:, overlapping_region:]])
                 assert output.size() == (1, length, len(LABELS)), output.size()
             else:
@@ -208,23 +266,44 @@ else:  # TRAINING_MODE == False
             current_label = 0
             current_word = ''
             tokens = tokenizer.convert_ids_to_tokens(encoded.input_ids[0])
-            display_lbl = ['', '.', '?', '!', ':', ';', ',', ' -', '...']
+            display_lbl = ['', '.', '?', '!', ':', ';', ',', '-', '...']
+            original_words = line.split(' ')
+            original_words_idx = 0
             for token, label in zip(tokens, labels[0]):
                 if not token.startswith('##'):
+                    if token == '[UNK]':
+                        assert original_words[original_words_idx] == current_word, "\n" + total_string + "\n" + line + "\n" + current_word + "\n" + \
+                                                                                     original_words[original_words_idx]
+                        token = original_words[original_words_idx + 1]
                     if token not in tokenizer.special_tokens_map.values():
-                        if current_word.isalnum():
-                            total_string = total_string + current_word + display_lbl[current_label] + ' '
+                        if original_words[original_words_idx] == current_word:
+                            if current_word[-1] in id_to_lbl:
+                                total_string = total_string + current_word + ' '
+                            else:
+                                total_string = total_string + current_word + display_lbl[current_label] + ' '
+                            original_words_idx += 1
+                            current_word = token
+                            current_label = label
                         else:
-                            total_string = total_string + current_word + ' '
-                        current_word = token
-                        current_label = label
+                            assert len(current_word) < len(original_words[ original_words_idx]), "\n" + total_string + "\n" + line + "\n" + current_word + "\n" + \
+                                                                                     original_words[original_words_idx]
+                            current_word += token
+                            assert len(current_word) <= len(original_words[original_words_idx]), "\n" + total_string + "\n" + line + "\n" + current_word + "\n" + \
+                                                                                      original_words[original_words_idx]
+
                 else:
-                    current_word += token[len('##'):]
-            if current_word.isalnum():
-                total_string = total_string + current_word + display_lbl[current_label] + ' '
-            else:
+                    if current_word is not None:
+                        current_word += token[len('##'):]
+            assert original_words[original_words_idx] == current_word, "\n" + str(original_words_idx) + "\n" + str(
+                len(original_words)) + "\norig=" + original_words[original_words_idx] + "\ncurr=" + current_word
+            if current_word[-1] in id_to_lbl:
                 total_string = total_string + current_word + ' '
+            else:
+                total_string = total_string + current_word + display_lbl[current_label] + ' '
+            assert original_words_idx + 1 == len(original_words)
+            total_string = total_string.strip()
+            # total_string = fix_bert_spaces(total_string)
             print(line.strip())
-            print(total_string.strip())
+            print(total_string)
             print()
-            print(total_string.strip(), file=o)
+            print(total_string, file=o)
