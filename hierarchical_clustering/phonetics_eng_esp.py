@@ -1,4 +1,6 @@
 import os
+import random
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -13,10 +15,12 @@ from matplotlib import pyplot as plt
 from sklearn.manifold import TSNE
 from scipy.cluster.hierarchy import dendrogram, linkage
 
-if not os.path.isfile('../phonetics/cnn.pth'):
-    print("Run phonetics/CNN.py to generate cnn.pth first")
+if not os.path.isfile('../phonetics/cnn_eng_esp.pth'):
+    print("Run phonetics/CNN_ENG_ESP.py to generate cnn_eng_esp.pth first")
     exit()
 
+DATA_FILE_ES = 'es_ES.txt'
+DATA_FILE_EN = 'en_US.txt'
 DEVICE = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 
 OUT_LOOKUP = ['', 'b', 'a', 'ʊ', 't', 'k', 'ə', 'z', 'ɔ', 'ɹ', 's', 'j', 'u', 'm', 'f', 'ɪ', 'o', 'ɡ', 'ɛ', 'n',
@@ -27,36 +31,47 @@ IN_LOOKUP = ['', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm'
              'u', 'v', 'w', 'x', 'y', 'z']
 
 IN_ALPHABET = {letter: idx for idx, letter in enumerate(IN_LOOKUP)}
-BATCH_SIZE = 1024
+BATCH_SIZE = 2048
 OUT_ALPHABET = {letter: idx for idx, letter in enumerate(OUT_LOOKUP)}
 TOTAL_OUT_LEN = 0
-DATA: [(torch.tensor, torch.tensor)] = []
-TEXT: [str] = []
+
+DATA: [(torch.tensor, str, str)] = []
+
 MAX_LEN = 32
-DATA_FILE = '../phonetics/en_US.txt'
-
-with open(DATA_FILE) as f:
-    for line in f:
-        text, phonemes = line.split("\t")
-        phonemes = phonemes.strip().split(",")[0]
-        phonemes = re.sub(r'[/\'ˈˌ]', '', phonemes)
-        text = re.sub(r'[^a-z]', '', text.strip())
-        TEXT.append(text)
-        assert len(text) <= MAX_LEN, text
-        text = torch.tensor([IN_ALPHABET[letter] for letter in text], dtype=torch.int)
-        DATA.append((text, phonemes))
 
 
-def collate(batch: [(torch.tensor, str)]):
+def process(f):
+    lang_code = f.split('_')[0].upper()
+    data = []
+    with open('../phonetics/'+f) as fd:
+        for line in fd:
+            text, phonemes = line.split("\t")
+            phonemes = phonemes.strip().split(",")[0]
+            phonemes = re.sub(r'[/\'ˈˌ]', '', phonemes)
+            text = re.sub(r'[^a-z]', '', text.strip())
+            assert len(text) <= MAX_LEN, text
+            text = torch.tensor([IN_ALPHABET[letter] for letter in text], dtype=torch.int)
+            data.append((text, phonemes, lang_code))
+    random.shuffle(data)
+    data = data[0:1024]
+    DATA.extend(data)
+
+
+process(DATA_FILE_EN)
+process(DATA_FILE_ES)
+
+
+def collate(batch: [(torch.tensor, str, str)]):
     batch_text = torch.zeros((len(batch), len(IN_ALPHABET), MAX_LEN))
     str_phonemes = list(map(lambda x: x[1], batch))
+    batch_lang_codes = list(map(lambda x: x[2], batch))
     str_words = []
-    for i, (sample, _) in enumerate(batch):
+    for i, (sample, _, _) in enumerate(batch):
         str_word = ''.join([IN_LOOKUP[symbol] for symbol in sample])
         str_words.append(str_word)
         for chr_pos, index in enumerate(sample):
             batch_text[i, index, chr_pos] = 1
-    return batch_text, str_phonemes, str_words
+    return batch_text, str_phonemes, str_words, batch_lang_codes
 
 
 class CNN(nn.Module):
@@ -91,8 +106,9 @@ samples = next(iter(data_loader))
 embedded = model(samples[0].to(DEVICE)).cpu()
 embed2d = TSNE(n_components=2).fit_transform(embedded)
 fig, ax = plt.subplots()
-cluster = AgglomerativeClustering(compute_full_tree=True, n_clusters=10, affinity='euclidean', linkage='ward')
+cluster = AgglomerativeClustering(compute_full_tree=True, n_clusters=2, affinity='euclidean', linkage='ward')
 cluster_labels = cluster.fit_predict(embed2d)
+cluster_labels = [cluster_label*2+(0 if lang_code=='ES' else 1) for (cluster_label, lang_code) in zip(cluster_labels, samples[3])]
 sc = ax.scatter(embed2d[:, 0], embed2d[:, 1], c=cluster_labels)
 # for i, (label, position) in enumerate(zip(samples[3], embed2d)):
 #     fig.annotate(label, position)
@@ -107,7 +123,7 @@ annot.set_visible(False)
 def update_annot(ind):
     pos = sc.get_offsets()[ind["ind"][0]]
     annot.xy = pos
-    text = " ".join([samples[2][n] for n in ind["ind"]])
+    text = ", ".join([samples[2][n]+" "+samples[3][n] for n in ind["ind"]])
     annot.set_text(text)
 
 

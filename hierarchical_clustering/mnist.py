@@ -18,11 +18,10 @@ if not os.path.isfile('../mnist_autoencoder/vae.pth'):
     exit()
 
 DEVICE = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
-
+SAMPLE_COUNT = 128
 transform = transforms.Compose([transforms.ToTensor()])
-trainset = Subset(tv.datasets.MNIST(root='../mnist_autoencoder', train=True, download=True, transform=transform),
-                  range(60000))
-dataloader = DataLoader(trainset, batch_size=128, shuffle=True, num_workers=0)
+trainset = tv.datasets.MNIST(root='../mnist_autoencoder', train=True, download=True, transform=transform)
+dataloader = DataLoader(trainset, batch_size=SAMPLE_COUNT, shuffle=True, num_workers=0)
 
 
 class VariationalAutoencoder(nn.Module):
@@ -80,7 +79,6 @@ class VariationalAutoencoder(nn.Module):
 
 
 torch.set_grad_enabled(False)
-EPOCHS = 1000
 model = VariationalAutoencoder(28, 28, 4).to(DEVICE)
 model.load_state_dict(torch.load('../mnist_autoencoder/vae.pth'))
 samples = next(iter(dataloader))
