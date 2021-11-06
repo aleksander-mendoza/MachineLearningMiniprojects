@@ -17,7 +17,7 @@ BATCH_SIZE = 32
 DEVICE = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 
 transform = transforms.Compose([transforms.ToTensor()])
-trainset = Subset(tv.datasets.MNIST(root='.', train=True, download=True, transform=transform),range(2048))
+trainset = Subset(tv.datasets.MNIST(root='.', train=True, download=True, transform=transform),range(60000))
 dataloader = DataLoader(trainset, batch_size=32, shuffle=True, num_workers=0)
 
 
@@ -67,7 +67,7 @@ class VariationalAutoencoder(nn.Module):
 
         mu = self.mu(x)
         log_var = self.log_var(x)
-        std = torch.exp(0.5 * log_var)  # standard deviation
+        std = 0.5 + torch.exp(0.5 * log_var)  # standard deviation
         eps = torch.randn_like(std)  # `randn_like` as we need the same size
         x = mu + (eps * std)  # sampling
 
@@ -113,3 +113,4 @@ for epoch in range(EPOCHS):
     # ===================log========================
     outer_bar.update(1)
     bimshow(next(iter(dataloader))[0])
+    torch.save(model.state_dict(), 'vae.pth')
