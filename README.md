@@ -8,6 +8,8 @@
    - [(DQN) Deep Q Learning](./acrobot/AB.py)
 - [MNIST autoencoder](./mnist_autoencoder) - convolutional autoencoder that compresses MNIST digits 
    - [(AE) Autoencoder solution](./mnist_autoencoder/MAE.py)
+   - [(SAE) Sparse Autoencoder solution](./mnist_autoencoder/SAE.py)
+   - [(SCAE) Sparse Convolutional Autoencoder solution](./mnist_autoencoder/SCAE.py)
    - [(VAE) Variational autoencoder](./mnist_autoencoder/VAE.py)
    - [(VAE) interactive explorer for 2D latent space](./mnist_autoencoder/VAE_explorer.py)
    - [(GAN) Generative adversarial neural network](./mnist_autoencoder/GAN.py)

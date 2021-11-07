@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader
 from torchvision.transforms import transforms
 from tqdm import tqdm
 from matplotlib import pyplot as plt
+import numpy as np
 
 # If you get 503 while downloading MNIST then download it manually
 # wget www.di.ens.fr/~lelarge/MNIST.tar.gz
@@ -20,20 +21,33 @@ trainset = tv.datasets.MNIST(root='.', train=True, download=True, transform=tran
 dataloader = DataLoader(trainset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
 
 
-def imshow(inp):
+def imshow(axs, inp):
     inp = inp.cpu().detach().numpy()
     mean = 0.1307
     std = 0.3081
     inp = ((mean * inp) + std)
-    plt.clf()
-    plt.imshow(inp, cmap='gray')
-    plt.pause(interval=0.01)
+    axs.imshow(inp, cmap='gray')
+
+
+def noise_img(img, noise_level, white_value=2):
+    x = img.clone().reshape(-1)
+    numNoiseBits = int(x.shape[0] * noise_level)
+    noise = np.random.permutation(x.shape[0])[0:numNoiseBits]
+    x[noise] = white_value
+    x = x.reshape(img.shape)
+    return x
 
 
 def bimshow(batch):
+    plt.clf()
+    noise_levels = [0, 0.1, 0.2, 0.4]
+    fig, axs = plt.subplots(1, len(noise_levels))
     with torch.no_grad():
-        output = model(batch.to(DEVICE)).cpu()
-        imshow(torch.cat((batch.view(-1, 28), output.view(-1, 28)), 1))
+        for i, noise_level in enumerate(noise_levels):
+            noisy = noise_img(batch, noise_level)
+            output = model(noisy.to(DEVICE)).cpu()
+            imshow(axs[i], torch.cat((noisy.view(-1, 28), output.view(-1, 28)), 1))
+    plt.show()
 
 
 class Autoencoder(nn.Module):
@@ -79,7 +93,7 @@ class Autoencoder(nn.Module):
 # Defining Parameters
 
 EPOCHS = 1000
-model = Autoencoder(28, 28, 32).to(DEVICE)
+model = Autoencoder(28, 28, 4).to(DEVICE)
 distance = nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), weight_decay=1e-5)
 outer_bar = tqdm(total=EPOCHS, position=0)
