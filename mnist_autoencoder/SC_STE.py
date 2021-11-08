@@ -209,7 +209,7 @@ train_loader = DataLoader(trainset, batch_size=BATCH_SIZE, shuffle=True, num_wor
 test_loader = DataLoader(testset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
 
 EPOCHS = 1000
-model = Autoencoder(28, 28, 1024, 32, 1.0).to(DEVICE)
+model = Autoencoder(28, 28, 2048, 128, 1.0).to(DEVICE)
 distance = nn.NLLLoss()
 optimizer = torch.optim.Adam(model.parameters(), weight_decay=1e-5)
 outer_bar = tqdm(total=EPOCHS, position=0)
@@ -250,7 +250,7 @@ for epoch in range(EPOCHS):
     accuracies.append(accuracy)
     print("Model accuracy: ", accuracy)
     plt.clf()
-    plt.plot(accuracy)
+    plt.plot(accuracies)
     plt.pause(0.1)
     torch.save(model.state_dict(), 'sc_ste.pth')
     outer_bar.update(1)
